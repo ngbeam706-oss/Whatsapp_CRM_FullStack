@@ -28,6 +28,8 @@ router.get('/inbox', async (req, res) => {
     staffEmail: req.staff.email,
     number: String(req.query.number || ''),
     assignee: String(req.query.assignee || ''),
+    // More filters (server/leadsTools.cjs cleans them): range, from, to, statusType, source, adId, tag, optedOut.
+    extra: req.query,
   });
   if (r.error) return res.status(500).json({ success: false, error: r.error });
   res.json(r);
@@ -65,7 +67,27 @@ router.get('/inbox-numbers', async (req, res) => {
   res.json({ numbers: await require('./whatsapp.cjs').listNumbers(req.staff.businessId) });
 });
 
-router.post('/inbox/start', validate({ body: B.startChat }), async (req, res) => reply(res, await inbox.startConversation(req.staff, req.body?.phone, req.body?.name)));
+// New chat / "Add lead" (a phone call, walk-in…): optional source, status, tags, note, assignedTo. Nothing is sent.
+router.post('/inbox/start', validate({ body: B.startChat }), async (req, res) => {
+  const { phone: p, name, ...extra } = req.body || {};
+  reply(res, await inbox.startConversation(req.staff, p, name, extra));
+});
+// Values for the inbox / Leads filter menus (this business only).
+router.get('/inbox-filter-options', async (req, res) => reply(res, await require('./leadsTools.cjs').filterOptions(req.staff)));
+
+// ---- Leads page (managers + Business Admin): list, CSV export, permanent delete. POST: numbers never in URLs ----
+const leadsTools = require('./leadsTools.cjs');
+router.post('/leads/search', requireManager, validate({ body: B.leadsQuery }), async (req, res) => reply(res, await leadsTools.search(req.staff, req.body || {})));
+router.post('/leads/export', requireManager, validate({ body: B.leadsQuery }), async (req, res) => {
+  const r = await leadsTools.exportCsv(req.staff, req.body || {});
+  if ('error' in r && r.error) return reply(res, r);
+  const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="leads-${day}.csv"`);
+  res.set('X-Lead-Count', String('count' in r ? r.count : 0));
+  res.send('csv' in r ? r.csv : '');
+});
+router.post('/leads/delete', requireManager, validate({ body: B.leadsQuery }), async (req, res) => reply(res, await leadsTools.deleteLeads(req.staff, req.body || {})));
 router.get('/inbox/:phone', phone, async (req, res) => {
   const r = await inbox.getConversation(req.staff.businessId, String(req.params.phone));
   if (r.error) return res.status(404).json({ success: false, error: r.error });

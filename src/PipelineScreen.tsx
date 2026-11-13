@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { RotateCw, Hand, Kanban, Lock } from 'lucide-react';
+import { RotateCw, Hand, Kanban, Lock, UserPlus } from 'lucide-react';
+import AddLeadModal from './AddLeadModal';
 import { api, btnSecondary } from './broadcastUtils';
 import { REFRESH } from './usePolling';
 import { useApi, refreshApi, setApiData, errorOf } from './queryClient';
@@ -35,6 +36,7 @@ export default function PipelineScreen({ onOpenChat, showToast }: Props) {
   const [dragging, setDragging] = useState<{ phone: string; stage: string } | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [mine, setMine] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [phoneStage, setPhoneStage] = useState<string>('new'); // phones show one status at a time
   const shownStage = keys.includes(phoneStage) ? phoneStage : keys[0];
 
@@ -67,8 +69,10 @@ export default function PipelineScreen({ onOpenChat, showToast }: Props) {
         <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
           <input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} /> Only mine
         </label>
+        <button onClick={() => setAdding(true)} className={btnSecondary}><UserPlus className="w-3.5 h-3.5" /> Add lead</button>
         <button onClick={load} className={btnSecondary}><RotateCw className="w-3.5 h-3.5" /> Refresh</button>
       </div>
+      {adding && <AddLeadModal me={me} showToast={showToast} onClose={() => setAdding(false)} onAdded={(phone) => { setAdding(false); onOpenChat(phone); }} />}
 
       {error && <div className="m-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
       {!data && !error && <div className="p-6 text-sm text-slate-500">Loading…</div>}

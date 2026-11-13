@@ -108,6 +108,9 @@ ANSWERS['/api/lead-statuses'] = {
   counts: { new: 1, interested: 0, s_report: 2, ordered: 0, completed: 0, repeat: 0, lost: 0 },
 };
 
+// Inbox / Leads filter menus (server/leadsTools.cjs filterOptions).
+ANSWERS['/api/inbox-filter-options'] = { sources: ['Direct WhatsApp', 'Instagram Ad', 'Phone call', 'Walk-in'], tags: ['vip'], ads: [{ id: '555', headline: 'Free check-up' }], addSources: ['Phone call', 'Walk-in', 'Referral', 'Website form', 'Other'] };
+
 /** Fake signed-in owner + canned API. Returns a counter of GET requests per path. */
 async function fakeBackend(page, { role = 'owner' } = {}) {
   const hits = {};
@@ -416,7 +419,7 @@ test('each screen has its own address in the role\'s area: refresh stays, Back w
   await page.goto('/app');
   await expect(page).toHaveURL(/\/admin\/home$/, { timeout: 20000 });
   const menu = page.getByRole('navigation', { name: 'Main menu' });
-  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
+  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
   await menu.getByRole('link', { name: 'Ads', exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/ads\/results$/);
   await expect(menu.getByRole('link', { name: 'Ads', exact: true })).toHaveAttribute('aria-current', 'page');
@@ -793,7 +796,7 @@ test('managers and the Business Admin still get every page', async ({ page }) =>
   await page.goto('/app');
   const menu = page.getByRole('navigation', { name: 'Main menu' });
   await expect(menu.getByRole('link', { name: 'Inbox' })).toBeVisible({ timeout: 20000 });
-  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
+  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
   await openScreen(page, 'Setup');
   // Phones: the settings pages also get their own row at the top of the Settings area.
   await page.setViewportSize({ width: 390, height: 800 });
@@ -1178,7 +1181,7 @@ test('Ads: "Create WhatsApp ads" is its own tab; its checklist shows what is mis
   ] } }); });
 
   await page.goto('/app');
-  await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Ads' }).click({ timeout: 20000 });
+  await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: /^Ads/ }).click({ timeout: 20000 });
   // Tabs: Ad results (default) / Create WhatsApp ads / Setup guide. Meta is only asked when the tab opens.
   const tabs = page.getByRole('tablist', { name: 'Ads sections' });
   await expect(tabs.getByRole('tab')).toHaveText(['Ad results', 'Create WhatsApp ads', 'Bookings to Meta', 'Setup guide'], { timeout: 15000 });
@@ -1204,7 +1207,7 @@ test('Ads: "Create WhatsApp ads" is its own tab; its checklist shows what is mis
   await expect.poll(() => asked).toBe(2);
   // The chosen tab is remembered.
   await page.reload();
-  await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Ads' }).click({ timeout: 20000 });
+  await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: /^Ads/ }).click({ timeout: 20000 });
   await expect(page.getByRole('tab', { name: 'Create WhatsApp ads' })).toHaveAttribute('aria-selected', 'true', { timeout: 15000 });
   expect(errors).toEqual([]);
 });
@@ -1228,7 +1231,7 @@ test('Ads: create a WhatsApp ad in 4 steps (paused), then launch it', async ({ p
   await page.route('**/api/ads/launches/*/launch', r => { launched = r.request().postDataJSON(); return r.fulfill({ json: { success: true, launch: { status: 'launched' } } }); });
 
   await page.goto('/app');
-  await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Ads' }).click({ timeout: 20000 });
+  await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: /^Ads/ }).click({ timeout: 20000 });
   await page.getByRole('button', { name: 'Create an ad' }).click({ timeout: 15000 });
   const wiz = page.getByRole('dialog', { name: 'Create a WhatsApp ad' });
 
@@ -1375,7 +1378,7 @@ test('Ads E: carousel, choose the number, where it shows (no Status for healthca
   });
 
   await page.goto('/app');
-  await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Ads' }).click({ timeout: 20000 });
+  await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: /^Ads/ }).click({ timeout: 20000 });
   await page.getByRole('button', { name: 'Create an ad' }).click({ timeout: 15000 });
   const wiz = page.getByRole('dialog', { name: 'Create a WhatsApp ad' });
   const png = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 600; c.height = 600; const g = c.getContext('2d'); g.fillStyle = '#a80'; g.fillRect(0, 0, 600, 600); return c.toDataURL('image/png').split(',')[1]; });
@@ -2629,4 +2632,100 @@ test('lead statuses: agents don\'t get the settings screen', async ({ page }) =>
   await page.goto('/agent/settings/lead-statuses');
   await expect(page.getByTestId('lead-statuses')).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Lead statuses' })).toHaveCount(0);
+});
+
+// ---- Leads tools (docs/progress/leads-tools.md) ----
+test('inbox: last 2 days by default, "Show all", more filters remembered; Add lead sends no WhatsApp message', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'agent' });
+  const lists = [];
+  const sent = [];
+  await page.route('**/api/inbox**', route => {
+    const req = route.request();
+    const url = new URL(req.url());
+    if (url.pathname === '/api/inbox' && req.method() === 'GET') lists.push(Object.fromEntries(url.searchParams));
+    if (url.pathname === '/api/inbox/start') { sent.push(req.postDataJSON()); return route.fulfill({ json: { success: true, contact: { ...LEAD, phone: '919000000077' } } }); }
+    return route.fallback();
+  });
+  await page.goto('/agent/inbox');
+  await expect(page.getByTestId('inbox-range')).toContainText('Showing the last 2 days', { timeout: 20000 });
+  await expect.poll(() => lists.at(-1)?.range).toBe('2d');
+  await page.getByTestId('inbox-range').getByRole('button', { name: 'Show all' }).click();
+  await expect.poll(() => lists.at(-1)?.range).toBe('all');
+  await expect(page.getByTestId('inbox-range')).toContainText('Showing all chats');
+
+  await page.getByTestId('inbox-range').getByRole('button', { name: /Filters/ }).click();
+  await page.getByTestId('more-filters').getByLabel('Source').selectOption('Phone call');
+  await page.getByTestId('more-filters').getByLabel('Active in').selectOption('7d');
+  await expect.poll(() => lists.at(-1)).toMatchObject({ range: '7d', source: 'Phone call' });
+  // Remembered for this person after a reload.
+  await page.reload();
+  await expect.poll(() => lists.at(-1), { timeout: 20000 }).toMatchObject({ range: '7d', source: 'Phone call' });
+
+  // Add lead (an agent: assigned to themselves; no assignee menu).
+  await page.getByRole('button', { name: 'Add lead' }).click();
+  const form = page.getByTestId('add-lead');
+  await form.getByPlaceholder('919876543210').fill('+91 90000 00077');
+  await form.getByPlaceholder('Ravi Kumar').fill('Kiran');
+  await form.getByLabel('Status').selectOption('interested');
+  await form.getByLabel(/^Note/).fill('Called about knee pain, wants Saturday');
+  await expect(form.getByText('The lead is assigned to you.')).toBeVisible();
+  await page.getByTestId('add-lead-save').click();
+  await expect.poll(() => sent.at(-1)).toMatchObject({ phone: '919000000077', name: 'Kiran', source: 'Phone call', status: 'interested', note: 'Called about knee pain, wants Saturday' });
+  expect(sent.at(-1).assignedTo).toBeUndefined();
+  await expect(page.getByText('Lead added.')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('Leads page (managers): filters, export CSV with chosen columns, delete with the typed count; agents never see it', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page);
+  const calls = [];
+  const LEADS = [{ ...LEAD, stage: 'ordered', opted_out: false }, { ...LEAD, phone: '919000000002', name: 'Sita', stage: 'new', source: 'Phone call', tags: [], opted_out: true }];
+  await page.route('**/api/leads/**', route => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    calls.push({ path, body: req.postDataJSON() });
+    if (path === '/api/leads/search') return route.fulfill({ json: { success: true, total: LEADS.length, leads: LEADS, capped: false } });
+    if (path === '/api/leads/export') return route.fulfill({ status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="leads-2026-11-13.csv"', 'X-Lead-Count': '2' }, body: '﻿Name,Phone\r\nRavi Kumar,\'+919000000001\r\n' });
+    if (path === '/api/leads/delete') return route.fulfill({ json: { success: true, deleted: 1, suppressed: 1 } });
+    return route.fallback();
+  });
+  await page.goto('/admin/leads');
+  const screen = page.getByTestId('leads-screen');
+  await expect(screen.getByTestId('lead-row')).toHaveCount(2, { timeout: 20000 });
+  await expect(screen.getByTestId('leads-total')).toHaveText('2 leads match');
+  await expect(screen.getByTestId('lead-row').nth(1).getByText('STOP', { exact: true })).toBeVisible();
+  // Filters go in the POST body (numbers never in the address).
+  await screen.getByLabel('Status', { exact: true }).selectOption('ordered');
+  await expect.poll(() => calls.filter(c => c.path === '/api/leads/search').at(-1)?.body?.filters?.status).toBe('ordered');
+
+  // Export: everything matching, chosen columns, downloaded as a file.
+  await screen.getByRole('button', { name: /Export CSV/ }).click();
+  await page.getByRole('dialog').getByLabel('Notes count').uncheck();
+  const download = page.waitForEvent('download');
+  await page.getByTestId('export-go').click();
+  expect((await download).suggestedFilename()).toBe('leads-2026-11-13.csv');
+  const ex = calls.find(c => c.path === '/api/leads/export').body;
+  expect(ex.filters.status).toBe('ordered');
+  expect(ex.columns).not.toContain('notes');
+  expect(ex.phones).toBeUndefined();
+
+  // Delete one: typed count required.
+  await screen.getByLabel('Select Sita').check();
+  await screen.getByRole('button', { name: 'Delete (1)' }).click();
+  await page.getByRole('dialog').getByRole('textbox').fill('1');
+  await page.getByTestId('confirm-ok').click();
+  await expect.poll(() => calls.find(c => c.path === '/api/leads/delete')?.body).toEqual({ phones: ['919000000002'], confirmCount: 1 });
+  await expect(page.getByText(/1 lead deleted \(1 STOP number kept blocked\)/)).toBeVisible();
+  await page.screenshot({ path: 'test-results/leads-page.png', fullPage: true });
+  expect(errors).toEqual([]);
+});
+
+test('Leads page: agents get no menu item and no screen', async ({ page }) => {
+  await fakeBackend(page, { role: 'agent' });
+  await page.goto('/agent/leads');
+  await expect(page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Inbox' })).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId('leads-screen')).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Leads', exact: true })).toHaveCount(0);
 });

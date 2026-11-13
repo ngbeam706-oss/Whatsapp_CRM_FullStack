@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense, type ReactNode } from 'react';
 import { Routes, Route, Navigate, NavLink, Link, useLocation, useNavigate } from 'react-router';
 import { BrandLogo, useBrandName } from './BrandMark';
-import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags } from 'lucide-react';
+import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags, Contact } from 'lucide-react';
 import { SCREENS, SETTINGS_PATH, urlOf, viewOf, canOpen, type View } from './appRoutes';
 import { supabase, saveCallRecording } from './supabaseClient';
 import { apiFetch } from './apiClient';
@@ -31,6 +31,7 @@ const BotConfigScreen = lazy(() => import('./BotConfigScreen'));
 const BotFlowScreen = lazy(() => import('./BotFlowScreen'));
 const GenericBotFlow = lazy(() => import('./GenericBotFlow'));
 const LeadStatusesScreen = lazy(() => import('./LeadStatusesScreen'));
+const LeadsScreen = lazy(() => import('./LeadsScreen'));
 import CallModal from './CallModal';
 import DbSyncModal from './DbSyncModal';
 import WebhookSetupModal from './WebhookSetupModal';
@@ -55,6 +56,8 @@ const NAV: Array<{ view: View; label: string; icon: typeof Inbox; tint: string }
   { view: 'home', label: 'Home', icon: HomeIcon, tint: '' },
   { view: 'chat', label: 'Inbox', icon: Inbox, tint: '' },
   { view: 'pipeline', label: 'Pipeline', icon: Kanban, tint: 'text-violet-300' },
+  // Managers and the Business Admin: every lead, export and delete.
+  { view: 'leads', label: 'Leads', icon: Contact, tint: 'text-teal-200' },
   { view: 'queries', label: 'Queries', icon: ClipboardList, tint: 'text-rose-200' },
   { view: 'broadcasts', label: 'Broadcasts', icon: Megaphone, tint: 'text-sky-300' },
   { view: 'analytics', label: 'Analytics', icon: BarChart3, tint: 'text-amber-200' },
@@ -540,6 +543,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
     item('home'),
     item('chat', { badge: countOf(['myChats', 'newChats']) }),
     item('pipeline'),
+    item('leads'),
     item('queries', { badge: countOf(['overdueQueries', 'newQueries', 'teamQueries']) }),
   ]);
   const growItems = pick([
@@ -670,6 +674,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
           />
         ))}
         {screenRoute('pipeline', <PipelineScreen onOpenChat={openChatFromPipeline} showToast={showToast} />)}
+        {screenRoute('leads', <LeadsScreen me={{ email: userEmail, role: userRole }} showToast={showToast} onOpenChat={openChatFromPipeline} />)}
         {screenRoute('queries', <QueriesScreen me={{ email: userEmail, role: userRole }} showToast={showToast} onOpenChat={openChatFromPipeline} onRaise={() => setShowRaiseQuery(true)} openQueryId={openQueryId} onOpenQueryHandled={clearOpenQuery} />)}
         {screenRoute('broadcasts', <BroadcastsScreen showToast={showToast} />)}
         {screenRoute('analytics', <AnalyticsScreen />)}

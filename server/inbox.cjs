@@ -139,12 +139,18 @@ async function staffEmails(biz) {
 
 /**
  * @param {string} biz
- * @param {{ filter?: string, stage?: string, q?: string, staffEmail?: string, number?: string, assignee?: string }} [options]
+ * @param {{ filter?: string, stage?: string, q?: string, staffEmail?: string, number?: string, assignee?: string, extra?: any }} [options]
+ *   extra: more filters (range, from, to, statusType, source, adId, tag, optedOut; server/leadsTools.cjs cleanFilters)
  *   number: only chats whose customer last wrote to this business number (Meta phone_number_id)
  *   assignee: only chats assigned to this team member (an email; the Inbox's "By person" filter)
  */
-async function listConversations(biz, { filter = 'all', stage = '', q = '', staffEmail = '', number = '', assignee = '' } = {}) {
+async function listConversations(biz, { filter = 'all', stage = '', q = '', staffEmail = '', number = '', assignee = '', extra = {} } = {}) {
   const parts = [`business_id=eq.${requireBusinessId(biz)}`, 'order=last_contacted_at.desc.nullslast', 'limit=300'];
+  // More filters (server/leadsTools.cjs): date range by last activity, status type, source, ad, tag, STOP.
+  const lt = require('./leadsTools.cjs');
+  const more = lt.cleanFilters(extra);
+  const added = await lt.filterParts(biz, { ...more, status: '', assignee: '', unread: false, number: '', q: '' });
+  parts.push(...added.parts);
   if (filter === 'mine') parts.push(`assigned_to=eq.${encodeURIComponent(String(staffEmail).toLowerCase())}`);
   const who = String(assignee || '').trim().toLowerCase();
   if (filter !== 'mine' && filter !== 'unassigned' && /^[^\s@,()]+@[^\s@,()]+$/.test(who)) parts.push(`assigned_to=eq.${encodeURIComponent(who)}`);
@@ -153,7 +159,7 @@ async function listConversations(biz, { filter = 'all', stage = '', q = '', staf
   // A status key of the business (server/leadStatuses.cjs); any well-formed key is safe to filter on.
   if (stage && require('./leadStatuses.cjs').KEY_RE.test(stage)) parts.push(`stage=eq.${stage}`);
   /** @type {string[]} groups that must all match (PostgREST allows one `or` per query, so they go in `and`) */
-  const ors = [];
+  const ors = [...added.ors];
   const search = String(q || '').trim().replace(/[^\p{L}\p{N} +]/gu, '').slice(0, 40);
   if (search) {
     const term = encodeURIComponent(`*${search}*`);
@@ -568,22 +574,57 @@ async function updateContact(phone, input = {}, staff) {
  * Start a conversation with a new number (WhatsApp requires a template for the first message).
  * @param {Staff} staff @param {unknown} phone @param {unknown} name
  */
-async function startConversation(staff, phone, name) {
+async function startConversation(staff, phone, name, extra = {}) {
   const biz = requireBusinessId(staff?.businessId);
   const p = digits(phone);
   if (!isPhone(p)) return { error: 'Enter the number with country code, e.g. 919876543210.' };
   const existing = await getLead(biz, p);
   if (existing) return { contact: existing, existed: true };
+
+  // "Add lead" (a phone call, walk-in…): source, status, tags, assignee and a first note. Nothing is sent on WhatsApp.
+  const lt = require('./leadsTools.cjs');
+  const x = extra && typeof extra === 'object' ? /** @type {Record<string, unknown>} */ (extra) : {};
+  const source = x.source === undefined ? 'Added by staff' : String(x.source);
+  if (!lt.SOURCES_ADDED.includes(source) && source !== 'Added by staff') return { error: `Source must be one of: ${lt.SOURCES_ADDED.join(', ')}.` };
+  const ls = require('./leadStatuses.cjs');
+  const list = await ls.listFor(biz);
+  const stage = x.status ? String(x.status) : (ls.firstOfType(list, 'new') || 'new');
+  if (!list.some(s => s.key === stage && s.active)) return { error: 'Unknown status.' };
+  const me = emailOf(staff);
+  /** @type {string | null} */
+  let assignTo = null;
+  if (x.assignedTo !== undefined && x.assignedTo !== null && x.assignedTo !== '') {
+    assignTo = String(x.assignedTo).toLowerCase().trim();
+    if (!isManagerOrOwner(staff.role) && assignTo !== me) return forbidden('Agents can add leads for themselves only.');
+    if (!(await staffEmails(biz)).includes(assignTo)) return { error: 'That person is not on the staff list.' };
+  } else if (!isManagerOrOwner(staff.role) && 'source' in x) {
+    assignTo = me; // a lead an agent adds is theirs
+  }
+  const note = typeof x.note === 'string' ? x.note.trim().slice(0, 2000) : '';
+
   // Plan limit: contacts added by staff. (Customers who message in are never blocked.)
   const room = await require('./limits.cjs').check(biz, 'contacts', 1);
   if (room.error) return { error: room.error, limitReached: true };
+  const now = new Date().toISOString();
   const res = await dbRequest('whatsapp_leads?on_conflict=business_id,phone', {
     method: 'POST',
     prefer: 'resolution=merge-duplicates,return=representation',
-    body: { business_id: biz, phone: p, name: String(name || '').trim().slice(0, 80) || `+${p}`, source: 'Added by staff', last_contacted_at: new Date().toISOString(), status: 'active' },
+    body: {
+      business_id: biz, phone: p, name: String(name || '').trim().slice(0, 80) || `+${p}`, source, last_contacted_at: now, status: 'active',
+      ...(stage !== 'new' ? { stage, stage_changed_at: now } : {}),
+      ...('tags' in x ? { tags: cleanTags(x.tags) } : {}),
+      ...(assignTo ? { assigned_to: assignTo } : {}),
+    },
   });
   if (!res.ok) return { error: 'Could not add the contact.' };
-  return { contact: res.data?.[0] };
+  // A number deleted after it replied STOP stays opted out.
+  const suppressed = await lt.reapply(biz, p);
+  if (note) await dbRequest('lead_notes', { method: 'POST', prefer: 'return=minimal', body: { business_id: biz, phone: p, author: staff.email, body: note } });
+  if ('source' in x) {
+    await dbRequest('contact_events', { method: 'POST', prefer: 'return=minimal', body: { business_id: biz, phone: p, event_type: 'lead_added', data: { by: staff.email, source } } });
+  }
+  const contact = suppressed ? (await getLead(biz, p)) || res.data?.[0] : res.data?.[0];
+  return { contact, ...(suppressed ? { optedOut: true } : {}) };
 }
 
 /** @param {string} phone @param {unknown} body @param {Staff} staff */
@@ -670,6 +711,7 @@ async function applyStageEvent(biz, phone, event) {
 }
 
 module.exports = {
+  closeColumnsReady,
   STAGES,
   AUTO_PAUSE_HOURS,
   isWindowOpen,

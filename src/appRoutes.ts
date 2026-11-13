@@ -8,7 +8,7 @@ import type { Role } from './types';
 
 export type View =
   | 'home' | 'chat' | 'pipeline' | 'queries' | 'broadcasts' | 'flow' | 'bot_config' | 'analytics' | 'ads' | 'ai' | 'team' | 'whatsapp' | 'setup' | 'profile'
-  | 'lead_statuses';
+  | 'lead_statuses' | 'leads';
 
 export type Area = 'platform' | 'admin' | 'manager' | 'agent';
 export const AREAS: readonly Area[] = ['platform', 'admin', 'manager', 'agent'];
@@ -26,6 +26,7 @@ export const SCREENS: Record<View, { path: string; managers: boolean; group: 'wo
   chat: { path: 'inbox', managers: false, group: 'work' },
   pipeline: { path: 'pipeline', managers: false, group: 'work' },
   queries: { path: 'queries', managers: false, group: 'work' },
+  leads: { path: 'leads', managers: true, group: 'work' },
   broadcasts: { path: 'broadcasts', managers: true, group: 'work' },
   analytics: { path: 'analytics', managers: true, group: 'work' },
   ads: { path: 'ads', managers: true, group: 'work' },

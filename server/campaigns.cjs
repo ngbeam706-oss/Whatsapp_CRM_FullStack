@@ -95,9 +95,12 @@ async function resolveAudience(biz, segment = {}) {
       if (!res.ok) throw new Error('Could not read contacts from the database.');
       res.data.forEach((/** @type {{ phone: string, name: string | null, opted_out?: boolean }} */ r) => known.set(r.phone, r));
     }
-    const optedOut = phones.filter(p => known.get(p)?.opted_out).length;
-    const recipients = phones.filter(p => !known.get(p)?.opted_out).map(p => ({ phone: p, name: known.get(p)?.name || null }));
-    return { recipients, optedOut, unknown: phones.filter(p => !known.has(p)).length };
+    // Numbers whose lead was deleted after they replied STOP (server/leadsTools.cjs) are never sent to either.
+    const suppressed = await require('./leadsTools.cjs').suppressedAmong(biz, phones.filter(p => !known.has(p)));
+    const blocked = (/** @type {string} */ p) => !!known.get(p)?.opted_out || suppressed.has(p);
+    const optedOut = phones.filter(blocked).length;
+    const recipients = phones.filter(p => !blocked(p)).map(p => ({ phone: p, name: known.get(p)?.name || null }));
+    return { recipients, optedOut, unknown: phones.filter(p => !known.has(p) && !suppressed.has(p)).length };
   }
 
   const leads = await fetchLeads(biz, segmentFilter(segment));
@@ -512,7 +515,9 @@ async function isOptedOut(biz, phone) {
   requireBusinessId(biz);
   if (!/^\d{7,15}$/.test(String(phone))) return false;
   const res = await dbRequest(`whatsapp_leads?select=opted_out&business_id=eq.${biz}&phone=eq.${phone}`);
-  return !!(res.ok && res.data?.[0]?.opted_out);
+  if (res.ok && res.data?.[0]?.opted_out) return true;
+  // No lead (deleted after STOP): the suppression list still says no.
+  return !(res.ok && res.data?.[0]) && require('./leadsTools.cjs').isSuppressed(biz, String(phone));
 }
 
 /** A customer replied: mark recent campaign / follow-up messages as replied. @param {string} biz @param {string} phone */
@@ -551,6 +556,8 @@ async function setOptOut(biz, phone, optedOut) {
     prefer: 'return=minimal',
     body: { opted_out: optedOut, opted_out_at: optedOut ? new Date().toISOString() : null },
   });
+  // START: they want messages again, also after their lead was deleted.
+  if (!optedOut) await require('./leadsTools.cjs').unsuppress(biz, String(phone));
 }
 
 module.exports = {

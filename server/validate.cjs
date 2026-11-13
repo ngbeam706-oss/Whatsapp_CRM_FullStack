@@ -63,7 +63,12 @@ const params = {
 // ---- request bodies ----------------------------------------------------------------------
 const body = {
   // Inbox
-  startChat: z.looseObject({ phone: textOrNumber(30), name: text(120).optional() }),
+  startChat: z.looseObject({
+    phone: textOrNumber(30), name: text(120).optional(),
+    // "Add lead" (server/inbox.cjs startConversation checks the values)
+    source: text(40).optional(), status: text(40).optional(), tags: z.array(text(40)).max(20).optional(),
+    note: text(2000).optional(), assignedTo: z.union([text(254), z.null()]).optional(),
+  }),
   sendText: z.looseObject({ text: text(4096), fromNumberId: numberIdField }),
   sendTemplate: z.looseObject({
     fromNumberId: numberIdField,
@@ -156,6 +161,11 @@ const body = {
   // Lead statuses (server/leadStatuses.cjs checks the values)
   leadStatus: z.looseObject({ label: text(60).optional(), hint: z.union([text(200), z.null()]).optional(), color: text(20).optional(), type: text(20).optional(), active: z.boolean().optional() }),
   leadStatusOrder: z.looseObject({ keys: z.array(text(40)).max(50) }),
+  // Leads page (server/leadsTools.cjs cleans the filters)
+  leadsQuery: z.looseObject({
+    filters: z.looseObject({}).optional(), phones: z.array(textOrNumber(30)).max(1000).optional(),
+    columns: z.array(text(30)).max(20).optional(), confirmCount: numberLike.optional(),
+  }),
 };
 
 /**

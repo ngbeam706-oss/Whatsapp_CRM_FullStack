@@ -290,6 +290,8 @@ async function handleIncomingMessage(biz, msg, value, contactName, receivedAt, n
   const isNew = before.ok && !before.lead;
   await logMessage(biz, item);
   await logLead(biz, item.sender, item.senderName, item.body, item.source, item.referral);
+  // A number whose lead was deleted after it replied STOP comes back opted out (server/leadsTools.cjs).
+  if (isNew) await require('./leadsTools.cjs').reapply(biz, msg.from);
   // Also records the number the customer wrote to: every reply below (whatsappFor) goes out from it.
   try { await inbox.onInbound(biz, msg.from, numberId); } catch (err) { console.error('[Inbox unread error]', err); }
   // Alert the team's open dashboards (no name, number or text in the alert; never stops the message).

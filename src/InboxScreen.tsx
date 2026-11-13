@@ -5,10 +5,14 @@ import type {
   StaffMember, TeamResponse, Template, VariableSpec,
 } from './types';
 import { useLeadStatuses, statusLook } from './leadStatuses';
+import { MoreFilters } from './leadFilters';
+import { NO_MORE_FILTERS, RANGE_LABEL, moreCount, moreFilterParams, useStoredState, type MoreFilterValues } from './leadFilterUtils';
+import AddLeadModal from './AddLeadModal';
 import { useBusinessNumbers, numberName, findNumber, defaultReplyNumber, windowFor } from './inboxNumbers';
 import {
   Search, X, Send, Phone, Copy, CheckCheck, Check, Clock, AlertTriangle, Bot, UserRound, Plus, FileText,
   ArrowLeft, StickyNote, Tag, PanelRightOpen, PanelRightClose, Trash2, MessageSquare, Hand, Lock, Sparkles,
+  UserPlus, SlidersHorizontal,
 } from 'lucide-react';
 import { api, templateNeeds, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
 import CallRecordingPlayer from './CallRecordingPlayer';
@@ -99,6 +103,10 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
   }, [openAssignee, onOpenAssigneeHandled]);
   const [stage, setStage] = useState<string>('');
   const leadStatuses = useLeadStatuses(); // the business's own statuses (shared cache)
+  // Date range (default: active in the last 2 days) and more filters, remembered per person in this browser.
+  const [more, setMore] = useStoredState<MoreFilterValues>(`inbox-filters:${me.email}`, { ...NO_MORE_FILTERS, range: '2d' });
+  const [showMore, setShowMore] = useState(false);
+  const [showAddLead, setShowAddLead] = useState(false);
   const [q, setQ] = useState('');
   const [searchQ, setSearchQ] = useState('');
   const [activePhone, setActivePhone] = useState<string | null>(null);
@@ -116,7 +124,9 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
     return () => clearTimeout(t);
   }, [q]);
   const byPerson = isManager && filter !== 'mine' && filter !== 'unassigned' ? assignee : '';
-  const listPath = `/api/inbox?${new URLSearchParams({ filter, stage, q: searchQ, ...(activeNumberFilter ? { number: activeNumberFilter } : {}), ...(byPerson ? { assignee: byPerson } : {}) })}`;
+  // A search looks through every date (the range would hide an older chat someone is looking for).
+  const moreParams = moreFilterParams(searchQ ? { ...more, range: 'all' } : more);
+  const listPath = `/api/inbox?${new URLSearchParams({ filter, stage, q: searchQ, ...(activeNumberFilter ? { number: activeNumberFilter } : {}), ...(byPerson ? { assignee: byPerson } : {}), ...moreParams })}`;
   const listQuery = useApi<{ conversations?: InboxContact[] }>(listPath, { refetchInterval: REFRESH.inboxList, keepPrevious: true });
   const list = listQuery.data?.conversations || NO_CONTACTS;
   const listError = errorOf(listQuery);
@@ -231,8 +241,18 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
               {q && <button onClick={() => setQ('')} className="text-slate-400 cursor-pointer"><X className="w-3.5 h-3.5" /></button>}
             </div>
             <AlertBell />
+            <button onClick={() => setShowAddLead(true)} className={btnSecondary} title="Add a lead (a phone call, a walk-in…)" aria-label="Add lead"><UserPlus className="w-3.5 h-3.5" /></button>
             <button onClick={() => setShowNewChat(true)} className={btnPrimary} title="Message a new number"><Plus className="w-3.5 h-3.5" /></button>
           </div>
+          {/* Which dates: the last 2 days by default (remembered per person). */}
+          <div className="flex items-center gap-1.5 text-xs text-slate-600" data-testid="inbox-range">
+            {searchQ ? <span>Searching all dates</span> : more.range === 'all' ? <span>Showing all chats</span> : <span>Showing {RANGE_LABEL[more.range].replace(/^Last/, 'the last').replace(/^Dates…$/, 'the chosen dates').replace(/^Today$/, 'today')}</span>}
+            {!searchQ && more.range !== 'all' && <>· <button onClick={() => setMore(m => ({ ...m, range: 'all' }))} className="font-semibold text-wa-teal hover:underline cursor-pointer">Show all</button></>}
+            <button onClick={() => setShowMore(s => !s)} aria-expanded={showMore} className="ml-auto font-semibold text-slate-600 hover:text-slate-900 cursor-pointer flex items-center gap-1">
+              <SlidersHorizontal className="w-3.5 h-3.5" /> Filters{moreCount(more) ? ` (${moreCount(more)})` : ''}
+            </button>
+          </div>
+          {showMore && <MoreFilters value={more} onChange={setMore} compact />}
           <div className="flex items-center gap-1 flex-wrap">
             {FILTERS.map(([id, label]) => (
               <button key={id} onClick={() => setFilter(id)}
@@ -393,6 +413,10 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
           onClose={() => setShowNewChat(false)}
           onStarted={(phone: string) => { setShowNewChat(false); loadList(); openChat(phone); }}
         />
+      )}
+      {showAddLead && (
+        <AddLeadModal me={me} showToast={showToast} onClose={() => setShowAddLead(false)}
+          onAdded={(phone: string) => { setShowAddLead(false); loadList(); openChat(phone); }} />
       )}
     </div>
   );

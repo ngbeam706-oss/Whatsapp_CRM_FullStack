@@ -1,0 +1,24 @@
+// Type checking for the dashboard (src/). Vite compiles .ts/.tsx itself; tsc only checks (noEmit).
+// Every file in src/ is .ts/.tsx (since 2026-11-09). allowJs stays on only so a stray .js file would
+// still build; new files must be .ts/.tsx. Run: npm run typecheck
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+    "resolveJsonModule": true,
+    "noUnusedLocals": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src"]
+}

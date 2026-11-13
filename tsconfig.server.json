@@ -1,0 +1,18 @@
+// Type checking for the server (server/*.cjs). The server runs these files as they are on Netlify
+// (no build step), so types are written as JSDoc comments. Only files that start with
+// `// @ts-check` are checked: add it to a file once its types are in place. Run: npm run typecheck
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["server/**/*.cjs", "server/**/*.d.ts"]
+}

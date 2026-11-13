@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Voice call</title>
+  <!-- The customer's call page (link sent on WhatsApp). Built by Vite like the dashboard: the script and
+       styles are bundled files from this site, so the site-wide Content Security Policy applies here too.
+       Keep it that way: no inline <script>, no CDN links (they would be blocked). -->
+  <script type="module" src="/src/call/callPage.ts"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col justify-between font-sans select-none">
+
+  <!-- Header -->
+  <header class="p-6 text-center">
+    <div class="inline-flex items-center gap-2 bg-emerald-950/80 border border-emerald-700/60 px-3 py-1 rounded-full text-xs font-bold text-emerald-300">
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+      <span>Live Audio Hotline</span>
+    </div>
+    <!-- The business's name comes from the link (?business=...); each business sends its own. -->
+    <h1 id="businessName" class="text-xl font-bold mt-2 tracking-tight">Voice call</h1>
+    <p class="text-xs text-slate-400">Talk to our team</p>
+  </header>
+
+  <!-- Center Card -->
+  <main class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+
+    <!-- Avatar Animation -->
+    <div class="relative my-6">
+      <div id="ringAnimation" class="absolute -inset-4 rounded-full bg-teal-500/20 pulse-ring"></div>
+      <div class="w-28 h-28 rounded-full bg-gradient-to-tr from-teal-600 to-emerald-500 flex items-center justify-center text-4xl font-bold shadow-2xl border-4 border-slate-800 relative z-10">
+        📞
+      </div>
+    </div>
+
+    <h2 id="callTargetName" class="text-2xl font-bold tracking-tight">Our team</h2>
+    <p id="callStatus" class="text-sm font-semibold text-emerald-400 mt-1 animate-pulse">
+      Requesting microphone permission...
+    </p>
+
+    <div id="timerContainer" class="hidden mt-3">
+      <span id="callTimer" class="text-3xl font-mono font-bold text-teal-300">00:00</span>
+      <p class="text-[11px] text-slate-400 mt-1">High Quality Encrypted WebRTC Audio</p>
+    </div>
+
+    <!-- Remote Audio Element (Hidden) -->
+    <audio id="remoteAudio" autoplay playsinline></audio>
+
+  </main>
+
+  <!-- Footer Controls -->
+  <footer class="p-8 bg-slate-800/80 border-t border-slate-700/60 flex items-center justify-center gap-8">
+
+    <!-- Mute Button -->
+    <button id="muteBtn" class="w-14 h-14 rounded-full bg-slate-700 active:bg-slate-600 text-white flex flex-col items-center justify-center shadow-lg transition">
+      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+      </svg>
+      <span class="text-[9px] font-bold mt-0.5">Mute</span>
+    </button>
+
+    <!-- End Call Button -->
+    <button id="endBtn" class="w-16 h-16 rounded-full bg-rose-600 active:bg-rose-700 text-white flex flex-col items-center justify-center shadow-xl transition transform active:scale-95">
+      <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z"></path>
+      </svg>
+      <span class="text-[10px] font-bold mt-0.5">End</span>
+    </button>
+
+  </footer>
+</body>
+</html>

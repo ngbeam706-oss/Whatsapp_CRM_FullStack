@@ -1,0 +1,69 @@
+[build]
+  publish = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  # Netlify blocks a deploy if a secret env var value appears in the build output.
+  # The Supabase URL and publishable/anon key are public by design (they ship to the browser).
+  SECRETS_SCAN_OMIT_KEYS = "VITE_SUPABASE_URL,VITE_SUPABASE_ANON_KEY,SUPABASE_URL,SUPABASE_ANON_KEY,NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,PHONE_NUMBER,PHONE_NUMBER_ID,GRAPH_API_VERSION,PUBLIC_SITE_URL"
+
+# Background worker: follow-ups, broadcasts, payment checks. Every 5 minutes to save Netlify credits
+# (customer replies don't wait for it: they go through the webhook immediately).
+[functions."broadcast-worker"]
+  schedule = "*/5 * * * *"
+
+# Security headers for the dashboard pages and files (the API sets its own in server/security.cjs).
+# The Content Security Policy is ENFORCED (since 2026-11-09): only this site's own scripts run, and the
+# browser may only talk to this site and Supabase. Both pages (index.html and the customer's call.html)
+# are built by Vite with no CDN or inline scripts, which this needs. If a new page or library needs
+# something else, add it here, and test with the browser console open (a blocked item shows there).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), geolocation=(), payment=(), microphone=(self)"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co; font-src 'self' data:; frame-src https://business.facebook.com https://www.facebook.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+
+# Built JS/CSS files have a content hash in their names, so browsers may keep them for a year
+# (fewer requests, faster repeat visits). index.html is not cached, so a deploy shows at once.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Route Webhook directly to Netlify Function
+[[redirects]]
+  from = "/webhook"
+  to = "/.netlify/functions/api/webhook"
+  status = 200
+  force = true
+
+# Each business's own webhook address: /webhook/<key>
+[[redirects]]
+  from = "/webhook/*"
+  to = "/.netlify/functions/api/webhook/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/whatsapp/webhook"
+  to = "/.netlify/functions/api/webhook"
+  status = 200
+  force = true
+
+# Route API requests to Netlify Function
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/api/:splat"
+  status = 200
+  force = true
+
+# Fallback for SPA static pages
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+

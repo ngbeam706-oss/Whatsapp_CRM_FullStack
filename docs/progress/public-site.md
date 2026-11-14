@@ -75,7 +75,7 @@ LIVE 2026-11-11, deploy 6af44563.
   - Tests: `tests/branding.test.cjs` (6), e2e "platform console Branding", "branding from the console shows
     everywhere".
   - `src/site/siteConfig.ts` now holds only defaults.
-- **Application URL (2026-11-14, local, not deployed; no SQL):**
+- **Application URL (LIVE 2026-11-14, deploy 6af81b78; no SQL):**
   - **What it is:** Platform console → Branding → "Application URL" card, Platform Owner only. Every link the app
     builds to itself starts with it (`server/siteUrl.cjs` `siteUrl()`):
     - each business's WhatsApp webhook URL `<url>/webhook/<key>` (the key itself never changes),

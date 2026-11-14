@@ -63,7 +63,7 @@ New tab **Ads → Manage** (`/<area>/ads/manage`), laid out like Ads Manager:
 - e2e: Manage tab, drill-down campaign → ad sets → ads, switch off a campaign with the confirm dialog.
 
 ## Status
-M1 + M2 built locally 2026-11-14, NOT deployed (no SQL). M3 / M4 not started (M3 waits for the Meta 2859024 case).
+M1 + M2 LIVE 2026-11-14 (deploy 6af83f79, commit b629fd0; no SQL). M3 / M4 not started (M3 waits for the Meta 2859024 case).
 
 ## Done (M1 + M2)
 - `server/adsManage.cjs`:

@@ -58,7 +58,7 @@ doctor's profile)
 | C4 | Patient details at booking, case-sheet photos by the doctor, earlier sheets on return visits, My patients | built locally |
 | C5 | Follow-up date by the doctor -> agents' Follow-ups list -> book the return visit | built locally (WhatsApp reminder next) |
 
-## Done (2026-11-14, local, NOT deployed; SQL 20261139 + 20261140 not run)
+## Done (LIVE 2026-11-14, deploy 6af83f79; SQL 20261139 + 20261140 run; Cloudinary tested with the real account)
 - **SQL `20261139_clinic.sql`:** `clinic_settings` (Razorpay keys encrypted, webhook key, link hours), `clinic_doctors`,
   `clinic_doctor_hours`, `clinic_doctor_days_off`, `clinic_appointments` (unique active slot per doctor),
   `clinic_payments`. All server-only; a doctor's login may read only its own row's id / business / name / active.

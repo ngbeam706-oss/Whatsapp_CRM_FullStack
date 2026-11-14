@@ -94,7 +94,7 @@ doctor's profile)
   sheet); e2e "Clinic: an agent books…" (patient form + follow-ups tab) and "Clinic: a doctor signs in…" (visit page,
   photo upload, follow-up, earlier sheet, hours).
 
-## Payment type at booking (2026-11-14, local, NOT deployed; SQL 20261141 not run)
+## Payment type at booking (LIVE 2026-11-14, deploy 6af867d7; SQL 20261141 run)
 - Booking form → **Payment**: Online payment (Razorpay) / Cash / PhonePe / UPI / Card / Other (only when the fee is
   above 0). Saved as `clinic_appointments.payment_method` (SQL `20261141_clinic_payment_method.sql`; booking still
   works without the column).
@@ -108,7 +108,7 @@ doctor's profile)
 - Tests: `tests/clinic.test.cjs` (+ payment-type test, reference rules); e2e "Clinic: an agent books…, picks PhonePe /
   UPI and marks it paid with the transaction ID".
 
-## Collections + booking hints (2026-11-14, local, NOT deployed; no SQL)
+## Collections + booking hints (LIVE 2026-11-14, deploy 6af867d7; no SQL)
 - **Appointments → Collections** (managers + Business Admin; `server/clinicReport.cjs`, `GET /api/clinic/report`,
   `src/ClinicCollections.tsx`): Today / Yesterday / Last 7 / Last 30 days / pick dates (≤ 92 days).
   - Money paid in the range: collected, discounts, by payment type, by who took it (cash to hand over), by doctor,

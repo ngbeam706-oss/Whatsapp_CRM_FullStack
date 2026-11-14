@@ -8,6 +8,7 @@ import { useLeadStatuses, statusLook } from './leadStatuses';
 import { MoreFilters } from './leadFilters';
 import { NO_MORE_FILTERS, RANGE_LABEL, moreCount, moreFilterParams, useStoredState, type MoreFilterValues } from './leadFilterUtils';
 import AddLeadModal from './AddLeadModal';
+import ChatAppointmentButton from './ChatAppointmentButton';
 import { ReturnedBadge, RenameButton } from './leadNames';
 import { otherWaName, useRenameLead } from './leadNameUtils';
 import { useBusinessNumbers, numberName, findNumber, defaultReplyNumber, windowFor } from './inboxNumbers';
@@ -575,6 +576,7 @@ function Conversation({ convo, me, staff, numbers, showDetails, onToggleDetails,
         )}
 
         <CloseChatButton c={c} disabled={!canAct} onDone={onSent} showToast={showToast} />
+        <ChatAppointmentButton phone={c.phone} name={c.name && !/^\+?\d+$/.test(c.name) ? c.name : ''} disabled={!canAct} showToast={showToast} />
         <button onClick={onStartCall} className="p-1.5 rounded-lg hover:bg-slate-200 text-emerald-700 cursor-pointer" title="Audio call"><Phone className="w-4 h-4" /></button>
         <button onClick={() => { navigator.clipboard?.writeText(`+${c.phone}`); showToast('Number copied'); }} className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 cursor-pointer" title="Copy number"><Copy className="w-4 h-4" /></button>
         <button onClick={onToggleDetails} className="hidden lg:block p-1.5 rounded-lg hover:bg-slate-200 text-slate-500 cursor-pointer" title={showDetails ? 'Hide details' : 'Show details'}>

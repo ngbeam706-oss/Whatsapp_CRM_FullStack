@@ -29,6 +29,8 @@ app.use(cors({ origin: allowedOrigins.length ? allowedOrigins : false }));
 // The ad picture (Ads -> Create an ad) arrives as base64 text: up to 1 MB of image is ~1.4 MB of JSON.
 // Only this route gets the larger limit (parsed here first, so the parser below skips it).
 app.use('/api/ads/create/image', express.json({ limit: '2mb' }));
+// A doctor's case-sheet photo (server/clinicPatients.cjs, at most 4 MB of image): only the upload route.
+app.post('/api/doctor/appointments/:id/sheets', express.json({ limit: '6mb' }));
 // Keep the raw body: the webhook signature is computed over the exact bytes Meta sent.
 app.use(express.json({
   limit: '1mb',
@@ -100,6 +102,16 @@ app.post('/api/public/signup-requests', rateLimit({ name: 'signup_request', wind
     return res.json({ success: true, message: r.message });
   });
 
+// ---- Public: Razorpay webhook for a clinic's payment links (signed with the clinic's webhook secret; server/clinicPay.cjs) ----
+app.post('/webhook/razorpay/:key', rateLimit({ name: 'razorpay_webhook', windowMs: 60000, max: 120 }), async (req, res) => {
+  const r = await require('./clinicPay.cjs').handleWebhook(String(req.params.key), /** @type {any} */ (req).rawBody, String(req.get('x-razorpay-signature') || ''));
+  res.status(r.status).json(r.body);
+});
+
+// ---- Doctors only (clinic module): their own hours and appointment queue, never chats ----
+const clinicRoutes = require('./clinicRoutes.cjs');
+app.use('/api/doctor', apiAuthGuard, maintenance.gate, require('./clinic.cjs').requireDoctor, clinicRoutes.doctorRouter);
+
 // ---- Platform admins only: the platform console (counts and settings, never chats) ----
 app.use('/api/platform', apiAuthGuard, require('./platformRoutes.cjs'));
 
@@ -107,7 +119,7 @@ app.use('/api/platform', apiAuthGuard, require('./platformRoutes.cjs'));
 app.post('/api/client-errors', apiAuthGuard, rateLimit({ name: 'client_errors', windowMs: 60000, max: 10 }), requireStaff, clientErrorRoute);
 
 // ---- Staff only: dashboard API (closed while the platform is under maintenance) ----
-app.use('/api', apiAuthGuard, maintenance.gate, requireStaff, apiRoutes, broadcastRoutes, automationRoutes, inboxRoutes, whatsappRoutes, queryRoutes, adsRoutes, require('./waCallRoutes.cjs'), require('./staffRoutes.cjs'));
+app.use('/api', apiAuthGuard, maintenance.gate, requireStaff, apiRoutes, broadcastRoutes, automationRoutes, inboxRoutes, whatsappRoutes, queryRoutes, adsRoutes, require('./waCallRoutes.cjs'), require('./staffRoutes.cjs'), clinicRoutes.staffRouter);
 
 // ---- Fallbacks -------------------------------------------------------------
 app.use((req, res) => {

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useConfirm } from './confirm';
 import { Navigate, useLocation, useNavigate } from 'react-router';
-import { Target, RotateCw, Link2, Unlink, AlertTriangle, Pause, Play, Wallet, Bell, X, Search, ChevronLeft, ChevronRight, ChevronDown, Megaphone, LayoutList, ArrowRight, Eye, ExternalLink, Image as ImageIcon, BarChart3, Sparkles, BookOpen, Send, Copy, Phone, Filter, type LucideIcon } from 'lucide-react';
+import { Target, RotateCw, Link2, Unlink, AlertTriangle, Pause, Play, Wallet, Bell, X, Search, ChevronLeft, ChevronRight, ChevronDown, Megaphone, LayoutList, ArrowRight, Eye, ExternalLink, Image as ImageIcon, BarChart3, Sparkles, BookOpen, Send, Copy, Phone, Filter, Layers, type LucideIcon } from 'lucide-react';
 import AdConversions from './AdConversions';
 import AdsBilling, { AdsOwnership } from './AdsBilling';
 import { api, errorMessage, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
@@ -11,12 +11,14 @@ import MetaSetupGuide from './MetaSetupGuide';
 import MetaOrgGuide from './MetaOrgGuide';
 import AdsCreateReady from './AdsCreateReady';
 import AdsFunnel from './AdsFunnel';
+import AdsManage from './AdsManage';
 import { ADS_GUIDE } from './metaGuides';
 
 // Tabs of the Ads page once an ad account is connected.
-type PageTab = 'results' | 'funnel' | 'create' | 'conversions' | 'guide';
+type PageTab = 'results' | 'manage' | 'funnel' | 'create' | 'conversions' | 'guide';
 const PAGE_TABS: Array<[PageTab, string, LucideIcon]> = [
   ['results', 'Ad results', BarChart3],
+  ['manage', 'Manage', Layers],
   ['funnel', 'Funnel', Filter],
   ['create', 'Create WhatsApp ads', Sparkles],
   ['conversions', 'Bookings to Meta', Send],
@@ -223,6 +225,7 @@ export default function AdsScreen({ userRole, showToast, basePath }: { userRole:
               {report && <Results report={report} alertSettings={account.alerts} onChanged={() => load()} showToast={showToast} />}
             </>
           )}
+          {view === 'manage' && <AdsManage showToast={showToast || (() => {})} />}
           {view === 'funnel' && <AdsFunnel showToast={showToast || (() => {})} />}
           {view === 'create' && <AdsCreateReady isOwner={isOwner} showToast={showToast} />}
           {view === 'conversions' && <AdConversions isOwner={isOwner} showToast={showToast} />}

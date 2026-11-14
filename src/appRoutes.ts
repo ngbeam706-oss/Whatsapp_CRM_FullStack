@@ -8,12 +8,13 @@ import type { Role } from './types';
 
 export type View =
   | 'home' | 'chat' | 'pipeline' | 'queries' | 'broadcasts' | 'flow' | 'bot_config' | 'analytics' | 'ads' | 'ai' | 'team' | 'whatsapp' | 'setup' | 'profile'
-  | 'lead_statuses' | 'leads' | 'lead_assignment';
+  | 'lead_statuses' | 'leads' | 'lead_assignment' | 'appointments' | 'clinic';
 
-export type Area = 'platform' | 'admin' | 'manager' | 'agent';
-export const AREAS: readonly Area[] = ['platform', 'admin', 'manager', 'agent'];
+/** 'doctor': clinic doctors (separate logins, not staff): their own appointments and hours only (src/DoctorApp.tsx). */
+export type Area = 'platform' | 'admin' | 'manager' | 'agent' | 'doctor';
+export const AREAS: readonly Area[] = ['platform', 'admin', 'manager', 'agent', 'doctor'];
 export const AREA_OF_ROLE: Record<Role, Area> = { owner: 'admin', manager: 'manager', agent: 'agent' };
-export const AREA_LABEL: Record<Area, string> = { platform: 'platform staff', admin: 'the Business Admin', manager: 'managers', agent: 'agents' };
+export const AREA_LABEL: Record<Area, string> = { platform: 'platform staff', admin: 'the Business Admin', manager: 'managers', agent: 'agents', doctor: 'doctors' };
 /** Old addresses (before role areas): /app/... is moved to the signed-in role's own area. */
 export const LEGACY_BASE = '/app';
 
@@ -30,12 +31,15 @@ export const SCREENS: Record<View, { path: string; managers: boolean; group: 'wo
   broadcasts: { path: 'broadcasts', managers: true, group: 'work' },
   analytics: { path: 'analytics', managers: true, group: 'work' },
   ads: { path: 'ads', managers: true, group: 'work' },
+  // Hospitals / clinics only (shown when /api/clinic/status says enabled).
+  appointments: { path: 'appointments', managers: false, group: 'work' },
   profile: { path: 'profile', managers: false, group: 'work' },
   setup: { path: 'settings/setup', managers: true, group: 'settings' },
   whatsapp: { path: 'settings/whatsapp', managers: true, group: 'settings' },
   team: { path: 'settings/team', managers: true, group: 'settings' },
   lead_statuses: { path: 'settings/lead-statuses', managers: true, group: 'settings' },
   lead_assignment: { path: 'settings/lead-assignment', managers: true, group: 'settings' },
+  clinic: { path: 'settings/clinic', managers: true, group: 'settings' },
   flow: { path: 'settings/bot-flow', managers: true, group: 'settings' },
   bot_config: { path: 'settings/keywords', managers: true, group: 'settings' },
   ai: { path: 'settings/ai', managers: true, group: 'settings' },

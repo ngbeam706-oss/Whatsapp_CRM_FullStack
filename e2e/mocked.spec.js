@@ -108,6 +108,9 @@ ANSWERS['/api/lead-statuses'] = {
   counts: { new: 1, interested: 0, s_report: 2, ordered: 0, completed: 0, repeat: 0, lost: 0 },
 };
 
+// Clinic module (server/clinic.cjs): off for this (generic) test business unless a test turns it on.
+ANSWERS['/api/clinic/status'] = { enabled: false };
+
 // Inbox / Leads filter menus (server/leadsTools.cjs filterOptions).
 ANSWERS['/api/inbox-filter-options'] = { sources: ['Direct WhatsApp', 'Instagram Ad', 'Phone call', 'Walk-in'], tags: ['vip'], ads: [{ id: '555', headline: 'Free check-up' }], addSources: ['Phone call', 'Walk-in', 'Referral', 'Website form', 'Other'] };
 
@@ -134,6 +137,7 @@ async function fakeBackend(page, { role = 'owner' } = {}) {
   // Supabase: this user is staff (owner) of one business and not a platform admin.
   await page.route('**/rest/v1/staff_members*', r => r.fulfill({ json: { role, business_id: BIZ } }));
   await page.route('**/rest/v1/platform_admins*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
+  await page.route('**/rest/v1/clinic_doctors*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/auth/v1/**', r => r.fulfill({ json: {} }));
   const report = analyticsReport();
   await page.route('**/api/**', async (route) => {
@@ -1193,7 +1197,7 @@ test('Ads: "Create WhatsApp ads" is its own tab; its checklist shows what is mis
   await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: /^Ads/ }).click({ timeout: 20000 });
   // Tabs: Ad results (default) / Create WhatsApp ads / Setup guide. Meta is only asked when the tab opens.
   const tabs = page.getByRole('tablist', { name: 'Ads sections' });
-  await expect(tabs.getByRole('tab')).toHaveText(['Ad results', 'Funnel', 'Create WhatsApp ads', 'Bookings to Meta', 'Setup guide'], { timeout: 15000 });
+  await expect(tabs.getByRole('tab')).toHaveText(['Ad results', 'Manage', 'Funnel', 'Create WhatsApp ads', 'Bookings to Meta', 'Setup guide'], { timeout: 15000 });
   await expect(tabs.getByRole('tab', { name: 'Ad results' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('ads-create-ready')).toHaveCount(0);
   await expect(page.getByTestId('guide-ads')).toHaveCount(0);
@@ -2010,6 +2014,7 @@ test('maintenance: the Platform Admin switches it on and off in the console', as
   }, [STORAGE_KEY, ADMIN]);
   await page.route('**/rest/v1/staff_members*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/rest/v1/platform_admins*', r => r.fulfill({ json: { user_id: ADMIN.id } }));
+  await page.route('**/rest/v1/clinic_doctors*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/auth/v1/**', r => r.fulfill({ json: {} }));
   let state = { on: false, message: null, until: null, startedAt: null };
   const sent = [];
@@ -2058,6 +2063,7 @@ test('platform console Branding: fill in the app details (problems shown per fie
   }, [STORAGE_KEY, ADMIN]);
   await page.route('**/rest/v1/staff_members*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/rest/v1/platform_admins*', r => r.fulfill({ json: { user_id: ADMIN.id } }));
+  await page.route('**/rest/v1/clinic_doctors*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/auth/v1/**', r => r.fulfill({ json: {} }));
   // A tiny real PNG (1x1), so the preview image loads.
   const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
@@ -2128,6 +2134,7 @@ test('platform console (fake backend): every tab and a business drawer render', 
   // A platform admin: no staff row, but a platform_admins row.
   await page.route('**/rest/v1/staff_members*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/rest/v1/platform_admins*', r => r.fulfill({ json: { user_id: ADMIN.id } }));
+  await page.route('**/rest/v1/clinic_doctors*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/auth/v1/**', r => r.fulfill({ json: {} }));
   await page.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname;
@@ -2398,6 +2405,7 @@ test('U5 Platform console: grouped menu with badges, overview tiles, business se
   }, [STORAGE_KEY, ADMIN]);
   await page.route('**/rest/v1/staff_members*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/rest/v1/platform_admins*', r => r.fulfill({ json: { user_id: ADMIN.id } }));
+  await page.route('**/rest/v1/clinic_doctors*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/auth/v1/**', r => r.fulfill({ json: {} }));
   // Two businesses: one fine, one paused with payment due and no WhatsApp yet.
   const second = { ...PLATFORM_ANSWERS['/api/platform/overview'].businesses[0], id: 'b0000000-0000-4000-8000-000000000002', name: 'Mayura Hospitals', slug: 'mayura', status: 'suspended', created_at: new Date(Date.now() - 86400000).toISOString(), whatsapp: { connected: false, source: 'none' }, billing: { state: 'due', suspendOn: '2026-11-20' }, counts: { staff: 1, contacts: 900, messagesThisMonth: 5 } };
@@ -2457,6 +2465,7 @@ async function platformAs(page, role) {
   }, [STORAGE_KEY, ADMIN]);
   await page.route('**/rest/v1/staff_members*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/rest/v1/platform_admins*', r => r.fulfill({ json: { user_id: ADMIN.id } }));
+  await page.route('**/rest/v1/clinic_doctors*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route('**/auth/v1/**', r => r.fulfill({ json: {} }));
   const seen = { forbidden: [], sent: [] };
   await page.route('**/api/**', route => {
@@ -2867,5 +2876,219 @@ test('Inbox: rename a contact in the chat header (WhatsApp name shown under it),
   await page.getByTestId('inbox-range').getByRole('button', { name: /Filters/ }).click();
   await page.getByTestId('more-filters').getByLabel('Returning').check();
   await expect.poll(() => lists.at(-1)?.returning).toBe('true');
+  expect(errors).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Clinic module (docs/progress/clinic.md): appointments for hospitals, doctors' own area.
+// ---------------------------------------------------------------------------------------------
+const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+const CLINIC_DOCTOR = { id: 'd0000000-0000-4000-8000-000000000001', name: 'Dr Rao', specialty: 'General', fee: 500, slotMinutes: 15, active: true, loginReady: true };
+
+test('Clinic: an agent books a patient with a doctor and records a cash payment at the desk', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'agent' });
+  const slotAt = new Date(Date.now() + 3 * 3600000).toISOString();
+  let appts = [];
+  const sent = { book: [], desk: [] };
+  await page.route('**/api/clinic/**', route => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (path === '/api/clinic/status') return route.fulfill({ json: { success: true, enabled: true, razorpay: false } });
+    if (path === '/api/clinic/doctors') return route.fulfill({ json: { success: true, doctors: [CLINIC_DOCTOR] } });
+    if (path.endsWith('/slots')) return route.fulfill({ json: { success: true, slots: [{ startsAt: slotAt, time: '11:00' }] } });
+    if (path === '/api/clinic/patients') return route.fulfill({ json: { success: true, patients: [] } });
+    if (path === '/api/clinic/follow-ups') return route.fulfill({ json: { success: true, followUps: [{ appointmentId: 'ap0', patientId: 'pa0', phone: '919000000001', patientName: 'Ravi Kumar', doctorId: CLINIC_DOCTOR.id, doctorName: 'Dr Rao', lastVisit: NOW, due: istToday(), note: 'Bring blood report', overdue: false, dueToday: true }] } });
+    if (path === '/api/clinic/appointments' && req.method() === 'POST') {
+      const b = req.postDataJSON(); sent.book.push(b);
+      const a = { id: 'ap000000-0000-4000-8000-000000000001', doctorId: b.doctorId, doctorName: 'Dr Rao', phone: b.phone, patientName: b.patient.name, startsAt: b.startsAt, endsAt: b.startsAt, status: 'pending_payment', fee: 500, note: b.note, reason: b.reason, patientId: 'pa1', followUpOn: null, followUpNote: '', bookedBy: 'agent@e2e.test', confirmedAt: null, cancelledReason: '', payments: [] };
+      appts = [a];
+      return route.fulfill({ json: { success: true, appointment: a } });
+    }
+    if (path.endsWith('/desk-payment')) {
+      sent.desk.push(req.postDataJSON());
+      appts = appts.map(a => ({ ...a, status: 'confirmed', payments: [{ id: 'p1', method: 'cash', amount: 500, status: 'recorded', link: null, receiptNo: 'R-7', recordedBy: 'agent@e2e.test', paidAt: NOW, createdAt: NOW }] }));
+      return route.fulfill({ json: { success: true, appointment: appts[0] } });
+    }
+    if (path === '/api/clinic/appointments') return route.fulfill({ json: { success: true, appointments: appts } });
+    return route.fulfill({ status: 404, json: { error: 'no mock' } });
+  });
+  await page.goto('/agent/appointments');
+  const screen = page.getByTestId('appointments');
+  await expect(screen.getByText('No appointments')).toBeVisible({ timeout: 20000 });
+  await expect(screen.getByText(/Online payment links need Razorpay/)).toBeVisible();
+  await screen.getByRole('button', { name: 'Book' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Book appointment' });
+  await dialog.getByPlaceholder('91…').fill('919000000001');
+  // No patients on this chat yet: the new-patient form. Name, age, gender and the reason are required.
+  await dialog.getByLabel('Full name *').fill('Asha Devi');
+  await dialog.getByLabel('Age (years) *').fill('34');
+  await dialog.getByLabel('Doctor', { exact: true }).selectOption({ label: 'Dr Rao · General · ₹500' });
+  await dialog.getByRole('radio', { name: '11:00' }).click();
+  await expect(dialog.getByRole('button', { name: 'Book', exact: true })).toBeDisabled();
+  await dialog.getByLabel('Gender *').selectOption('female');
+  await dialog.getByLabel('Allergies').fill('Penicillin');
+  await dialog.getByLabel('Reason for the visit *').fill('Fever for 3 days');
+  await dialog.getByRole('button', { name: 'Book', exact: true }).click();
+  await expect.poll(() => sent.book.at(-1)).toMatchObject({ phone: '919000000001', doctorId: CLINIC_DOCTOR.id, startsAt: slotAt, reason: 'Fever for 3 days',
+    patient: { name: 'Asha Devi', age: 34, gender: 'female', allergies: 'Penicillin' } });
+  expect(sent.book[0].fee).toBeUndefined();
+  const item = screen.getByTestId('appointment');
+  await expect(item).toContainText('Waiting for payment');
+  await item.getByRole('button', { name: 'Paid at the desk' }).click();
+  const pay = page.getByRole('dialog', { name: /Paid at the desk/ });
+  await expect(pay.getByRole('textbox').first()).toBeDisabled();
+  await pay.getByRole('textbox').nth(1).fill('R-7');
+  await pay.getByRole('button', { name: 'Record payment' }).click();
+  await expect.poll(() => sent.desk.at(-1)).toMatchObject({ method: 'cash', amount: '500', receiptNo: 'R-7' });
+  await expect(item).toContainText('Confirmed');
+  await expect(item).toContainText('Paid ₹500 · Cash · receipt R-7');
+  await expect(item).toContainText('Fever for 3 days');
+  await expect(page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Appointments', exact: true })).toBeVisible();
+  await page.screenshot({ path: 'test-results/clinic-appointments.png', fullPage: true });
+  // Follow-ups the doctors set.
+  await screen.getByRole('tab', { name: 'Follow-ups' }).click();
+  const f = page.getByTestId('follow-up');
+  await expect(f).toContainText('Ravi Kumar');
+  await expect(f).toContainText('Today');
+  await expect(f).toContainText('Bring blood report');
+  await page.screenshot({ path: 'test-results/clinic-follow-ups.png', fullPage: true });
+  expect(errors).toEqual([]);
+});
+
+test('Clinic: a doctor signs in to their own area (queue + hours), never the inbox or staff screens', async ({ page }) => {
+  const errors = watchErrors(page);
+  await enforceCsp(page);
+  await page.addInitScript(([key, user]) => {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    localStorage.setItem(key, JSON.stringify({ access_token: 'e2e-fake-token', token_type: 'bearer', expires_in: 3600, expires_at: exp, refresh_token: 'e2e-refresh', user: { id: user.id, email: user.email, aud: 'authenticated', role: 'authenticated', app_metadata: {}, user_metadata: {} } }));
+  }, [STORAGE_KEY, { id: 'e2e00000-0000-4000-8000-0000000000d1', email: 'rao@e2e.test' }]);
+  await page.route('**/rest/v1/staff_members*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
+  await page.route('**/rest/v1/platform_admins*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
+  await page.route('**/rest/v1/clinic_doctors*', r => r.fulfill({ json: { id: CLINIC_DOCTOR.id, active: true } }));
+  await page.route('**/auth/v1/**', r => r.fulfill({ json: {} }));
+  const day = istToday();
+  let hours = { slotMinutes: 15, hours: [], daysOff: [] };
+  const saved = [];
+  const staffCalls = [];
+  const VISIT_ID = 'ap100000-0000-4000-8000-000000000001';
+  // A real 1x1 PNG: the browser shrinks it to a JPEG before upload.
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const uploads = [];
+  const followUps = [];
+  const visit = {
+    visit: { id: VISIT_ID, startsAt: new Date().toISOString(), status: 'confirmed', reason: 'Fever for 3 days', note: 'First visit', patientName: 'Asha Devi', followUpOn: null, followUpNote: '', sheets: [] },
+    patient: { id: 'pa1', name: 'Asha Devi', age: 34, gender: 'female', city: 'Guntur', allergies: 'Penicillin', conditions: 'Diabetes' },
+    history: [{ id: 'ap0', startsAt: '2026-10-01T05:00:00.000Z', status: 'completed', doctorName: 'Dr Rao', reason: 'Cough', followUpOn: '2026-10-15', followUpNote: 'Review', sheets: [{ id: 'old1', url: PNG, addedAt: '2026-10-01T05:30:00.000Z' }] }],
+  };
+  await page.route('**/api/**', route => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (!path.startsWith('/api/doctor/') && !path.startsWith('/api/public/') && path !== '/api/maintenance') staffCalls.push(path);
+    if (path === '/api/doctor/me') return route.fulfill({ json: { success: true, doctor: { name: 'Dr Rao', email: 'rao@e2e.test' } } });
+    if (path === '/api/doctor/appointments') return route.fulfill({ json: { success: true, day, appointments: [{ id: VISIT_ID, patientName: 'Asha Devi', startsAt: new Date().toISOString(), endsAt: new Date().toISOString(), status: 'confirmed', note: 'First visit', reason: 'Fever for 3 days', followUpOn: null }] } });
+    if (path === `/api/doctor/appointments/${VISIT_ID}/sheets` && req.method() === 'POST') { uploads.push(req.postDataJSON().image); visit.visit.sheets.push({ id: `s${uploads.length}`, url: PNG, addedAt: NOW }); }
+    if (path === `/api/doctor/appointments/${VISIT_ID}/follow-up`) { const b = req.postDataJSON(); followUps.push(b); visit.visit.followUpOn = b.date; visit.visit.followUpNote = b.note; }
+    if (path.startsWith(`/api/doctor/appointments/${VISIT_ID}`)) return route.fulfill({ json: { success: true, ...visit } });
+    if (path === '/api/doctor/hours' && req.method() === 'PUT') { const b = req.postDataJSON(); saved.push(b); hours = { ...hours, ...b }; }
+    if (path === '/api/doctor/hours') return route.fulfill({ json: { success: true, ...hours } });
+    if (path === '/api/maintenance') return route.fulfill({ json: { on: false } });
+    return route.fulfill({ status: 404, json: { error: `no mock for ${path}` } });
+  });
+  await page.goto('/app');
+  const app = page.getByTestId('doctor-app');
+  await expect(app.getByRole('heading', { name: 'My appointments' })).toBeVisible({ timeout: 20000 });
+  await expect(page).toHaveURL(/\/doctor\/appointments$/);
+  await expect(app.getByRole('list', { name: 'Appointments' })).toContainText('Asha Devi');
+  await expect(app.getByRole('list', { name: 'Appointments' })).toContainText('First visit');
+  await expect(page.getByRole('navigation', { name: 'Main menu' })).toHaveCount(0);
+  // Open the visit: the patient's details (allergy shown), the earlier visit's case sheet, add a photo, set a follow-up.
+  await app.getByRole('link', { name: /Asha Devi/ }).click();
+  const v = page.getByTestId('doctor-visit');
+  await expect(v).toContainText('34 yrs · Female · Guntur');
+  await expect(v).toContainText('Penicillin');
+  await expect(v).toContainText('Diabetes');
+  await expect(v.getByRole('list', { name: 'Earlier visits' })).toContainText('Cough');
+  await expect(v.getByRole('list', { name: 'Earlier visits' }).getByRole('img', { name: 'Case sheet 1' })).toBeVisible();
+  await v.getByLabel('Case-sheet photo', { exact: true }).setInputFiles({ name: 'sheet.png', mimeType: 'image/png', buffer: Buffer.from(PNG.split(',')[1], 'base64') });
+  await expect.poll(() => uploads.length).toBe(1);
+  expect(uploads[0]).toMatch(/^data:image\/jpeg;base64,/);
+  await expect(v.getByText('Case sheet added')).toBeVisible();
+  await v.getByRole('button', { name: '+14 days' }).click();
+  await v.getByLabel('Follow-up note').fill('Bring blood report');
+  await v.getByRole('button', { name: 'Save follow-up' }).click();
+  await expect.poll(() => followUps.at(-1)).toMatchObject({ note: 'Bring blood report' });
+  expect(followUps.at(-1).date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  await page.screenshot({ path: 'test-results/clinic-visit.png', fullPage: true });
+  await app.getByRole('link', { name: 'My hours' }).click();
+  await app.getByRole('button', { name: 'Add time range' }).click();
+  await app.getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => saved.at(-1)).toMatchObject({ slotMinutes: 15, hours: [{ weekday: 1, start: '09:00', end: '13:00' }] });
+  await expect(app.getByText('Hours saved')).toBeVisible();
+  await page.screenshot({ path: 'test-results/clinic-doctor.png', fullPage: true });
+  await page.goto('/admin/inbox');
+  await expect(page.getByTestId('area-not-allowed')).toBeVisible();
+  expect(staffCalls).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Ads → Manage (docs/progress/ads-manage.md): campaigns / ad sets / ads like Ads Manager.
+// ---------------------------------------------------------------------------------------------
+test('Ads Manage: campaigns with CRM numbers, drill down to ad sets and ads, turn a campaign off, change a budget', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page);
+  await page.route('**/api/ads?*', r => r.fulfill({ json: { adsEnabled: true, account: { connected: true, adAccountId: 'act_1111111111', name: 'E2E Ads', currency: 'INR', lastSyncAt: NOW, alerts: { maxCostPerChat: null, maxCostPerConversion: null, windowDays: 3 } }, report: null } }));
+  await page.route('**/api/ads/billing', r => r.fulfill({ json: { success: true, checkedAt: NOW, billingUrl: 'https://business.facebook.com/billing_hub/accounts/details/?asset_id=1', canEditLimit: true, billing: { status: 1, statusLabel: 'Active', problem: null, problemText: null, prepaid: false, due: 0, spent: 0, spendCap: null, method: null, currency: 'INR' } } }));
+  await page.route('**/api/ads/issues', r => r.fulfill({ json: { success: true, unread: 0, issues: [], billingProblem: null } }));
+  const row = (level, id, name, extra = {}) => ({ id, level, name, status: 'ACTIVE', delivery: 'ACTIVE', objective: level === 'campaign' ? 'OUTCOME_ENGAGEMENT' : null, campaignId: null, adsetId: null,
+    dailyBudget: level === 'ad' ? null : 500, lifetimeBudget: null, budgetRemaining: null, start: null, end: null, created: NOW, whatsapp: level === 'adset' ? true : null, canToggle: true,
+    spend: 500, impressions: 1500, clicks: 60, metaChats: 10, chats: 3, booked: 2, costPerChat: 166.67, metaUrl: `https://adsmanager.facebook.com/adsmanager/manage/x?act=1111111111&id=${id}`, ...extra });
+  let campaigns = [row('campaign', '101', 'Knee pain camp'), row('campaign', '102', 'Eye check', { dailyBudget: null, spend: 60, chats: 0, booked: 0, costPerChat: null })];
+  const asked = [];
+  const sent = [];
+  await page.route('**/api/ads/manage?*', r => {
+    const u = new URL(r.request().url());
+    asked.push(Object.fromEntries(u.searchParams));
+    const level = u.searchParams.get('level');
+    const rows = level === 'campaign' ? campaigns : level === 'adset' ? [row('adset', '201', 'Guntur 25-55')] : [row('ad', '301', 'Knee video'), row('ad', '302', 'Knee photo')];
+    return r.fulfill({ json: { success: true, level, parent: u.searchParams.get('parent'), days: 30, delivery: 'recent', currency: 'INR', rows, totals: { spend: 560, impressions: 0, clicks: 0, metaChats: 10, chats: 3, booked: 2, costPerChat: 186.67 }, total: rows.length, truncated: false, canEditAll: true } });
+  });
+  await page.route('**/api/ads/manage/**', r => {
+    sent.push({ url: new URL(r.request().url()).pathname, method: r.request().method(), body: r.request().postDataJSON() });
+    if (r.request().url().endsWith('/status')) campaigns = campaigns.map(c => (c.id === '101' ? { ...c, status: 'PAUSED', delivery: 'PAUSED' } : c));
+    return r.fulfill({ json: { success: true, ok: true } });
+  });
+
+  await page.goto('/admin/ads/manage');
+  const m = page.getByTestId('ads-manage');
+  const table = m.getByRole('table', { name: 'Campaigns' });
+  await expect(table.getByRole('row').filter({ hasText: 'Knee pain camp' })).toContainText('₹500', { timeout: 20000 });
+  await expect(table.getByRole('row').filter({ hasText: 'Knee pain camp' })).toContainText('Engagement');
+  await expect(table.getByRole('row').filter({ hasText: 'Eye check' })).toContainText('On ad sets');
+  await page.screenshot({ path: 'test-results/ads-manage.png', fullPage: true });
+
+  // Turn the campaign off: asked first, then only that campaign.
+  await table.getByRole('switch', { name: 'Knee pain camp on or off' }).click();
+  await page.getByTestId('confirm-ok').click();
+  await expect.poll(() => sent.at(-1)).toEqual({ url: '/api/ads/manage/campaign/101/status', method: 'POST', body: { status: 'PAUSED' } });
+  await expect(table.getByRole('switch', { name: 'Knee pain camp on or off' })).toHaveAttribute('aria-checked', 'false');
+
+  // Budget.
+  await table.getByRole('button', { name: 'Change budget of Knee pain camp' }).click();
+  await page.getByRole('dialog', { name: 'Daily budget' }).getByLabel('Budget', { exact: true }).fill('800');
+  await page.getByRole('dialog', { name: 'Daily budget' }).getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => sent.at(-1)).toEqual({ url: '/api/ads/manage/campaign/101', method: 'PATCH', body: { budget: 800 } });
+
+  // Drill down: campaign → its ad sets → their ads, with a breadcrumb back.
+  await table.getByRole('button', { name: 'Knee pain camp', exact: true }).click();
+  await expect(m.getByRole('table', { name: 'Ad sets' })).toContainText('Guntur 25-55');
+  await expect.poll(() => asked.at(-1)).toMatchObject({ level: 'adset', parent: '101' });
+  await m.getByRole('table', { name: 'Ad sets' }).getByRole('button', { name: 'Guntur 25-55', exact: true }).click();
+  await expect(m.getByRole('table', { name: 'Ads' })).toContainText('Knee photo');
+  await expect.poll(() => asked.at(-1)).toMatchObject({ level: 'ad', parent: '201' });
+  await expect(m.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Knee pain camp');
+  await m.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('button', { name: 'All campaigns' }).click();
+  await expect(m.getByRole('table', { name: 'Campaigns' })).toBeVisible();
   expect(errors).toEqual([]);
 });

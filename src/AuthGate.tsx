@@ -7,9 +7,10 @@ import type { Role } from './types';
 
 /** This login's staff_members row (RLS lets a login read only its own). */
 interface StaffRow { role: Role; business_id: string }
-interface StaffCheck { userId: string | null; staff: StaffRow | null; platformAdmin?: boolean }
+interface StaffCheck { userId: string | null; staff: StaffRow | null; platformAdmin?: boolean; doctor?: boolean }
 /** What the signed-in part of the app gets. */
-export interface SignedIn { session: Session; staff: StaffRow | null; platformAdmin: boolean; signOut: () => void }
+/** doctor: a clinic doctor's login (clinic_doctors, not staff): opens only the doctor area. */
+export interface SignedIn { session: Session; staff: StaffRow | null; platformAdmin: boolean; doctor: boolean; signOut: () => void }
 
 /**
  * Shows a staff login screen until someone signs in with a Supabase account
@@ -43,12 +44,14 @@ export default function AuthGate({ children }: { children: (signedIn: SignedIn) 
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
-    // Business staff (one business each), or a platform admin (separate logins, never both).
+    // Business staff (one business each), a platform admin, or a clinic doctor (separate logins, never two of these).
     Promise.all([
       supabase.from('staff_members').select('role, business_id').eq('user_id', userId).maybeSingle(),
       supabase.from('platform_admins').select('user_id').eq('user_id', userId).maybeSingle(),
-    ]).then(([s, p]) => {
-      if (!cancelled) setStaffCheck({ userId, staff: s.error ? null : (s.data as StaffRow | null), platformAdmin: !p.error && !!p.data });
+      // RLS: a doctor's login reads only its own row (and only these columns). Before SQL 20261139: an error = not a doctor.
+      supabase.from('clinic_doctors').select('id, active').eq('user_id', userId).maybeSingle(),
+    ]).then(([s, p, d]) => {
+      if (!cancelled) setStaffCheck({ userId, staff: s.error ? null : (s.data as StaffRow | null), platformAdmin: !p.error && !!p.data, doctor: !d.error && !!(d.data as { active?: boolean } | null)?.active });
     });
     return () => { cancelled = true; };
   }, [userId]);
@@ -58,7 +61,8 @@ export default function AuthGate({ children }: { children: (signedIn: SignedIn) 
   const checking = !sessionLoaded || (!!userId && staffCheck.userId !== userId);
   const staff = staffCheck.userId === userId ? staffCheck.staff : null;
   const platformAdmin = staffCheck.userId === userId && !!staffCheck.platformAdmin;
-  const notStaff = !!userId && !checking && !staff && !platformAdmin;
+  const doctor = staffCheck.userId === userId && !!staffCheck.doctor;
+  const notStaff = !!userId && !checking && !staff && !platformAdmin && !doctor;
 
   if (checking) {
     return <CenteredCard><p className="text-sm text-slate-500">Checking your sign-in…</p></CenteredCard>;
@@ -108,7 +112,7 @@ export default function AuthGate({ children }: { children: (signedIn: SignedIn) 
     );
   }
 
-  return <>{children({ session, staff, platformAdmin: !staff && platformAdmin, signOut })}</>;
+  return <>{children({ session, staff, platformAdmin: !staff && platformAdmin, doctor: !staff && !platformAdmin && doctor, signOut })}</>;
 }
 
 function LoginScreen() {

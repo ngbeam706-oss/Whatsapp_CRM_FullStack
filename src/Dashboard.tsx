@@ -10,6 +10,8 @@ import type { Role } from './types';
 
 // Only platform admins ever load the console.
 const PlatformConsole = lazy(() => import('./PlatformConsole'));
+// Only clinic doctors ever load the doctor area (their own appointments and hours; never chats).
+const DoctorApp = lazy(() => import('./DoctorApp'));
 
 /**
  * Every signed-in address (/platform, /admin, /manager, /agent, and the old /app) comes here.
@@ -22,11 +24,11 @@ export default function Dashboard() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthGate>
-        {({ session, staff, platformAdmin, signOut }) => (
+        {({ session, staff, platformAdmin, doctor, signOut }) => (
           <AreaGate
             email={session.user.email || ''}
             // AuthGate only gets here with a staff row or a platform admin; 'agent' is the least-privileged fallback.
-            area={platformAdmin ? 'platform' : AREA_OF_ROLE[staff?.role ?? 'agent']}
+            area={platformAdmin ? 'platform' : doctor ? 'doctor' : AREA_OF_ROLE[staff?.role ?? 'agent']}
             role={staff?.role ?? 'agent'}
             signOut={signOut}
           />
@@ -45,6 +47,9 @@ function AreaGate({ email, area, role, signOut }: { email: string; area: Area; r
   if (asked !== area) return <NotAllowed asked={asked} home={home} email={email} signOut={signOut} />;
   if (area === 'platform') {
     return <Suspense fallback={null}><PlatformConsole base={home} email={email} onSignOut={signOut} /></Suspense>;
+  }
+  if (area === 'doctor') {
+    return <Suspense fallback={null}><DoctorApp base={home} email={email} onSignOut={signOut} /></Suspense>;
   }
   return <App base={home} userEmail={email} userRole={role} onSignOut={signOut} />;
 }

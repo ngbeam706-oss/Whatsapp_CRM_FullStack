@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense, type ReactNode } from 'react';
 import { Routes, Route, Navigate, NavLink, Link, useLocation, useNavigate } from 'react-router';
 import { BrandLogo, useBrandName } from './BrandMark';
-import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags, Contact, Shuffle } from 'lucide-react';
+import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags, Contact, Shuffle, CalendarDays, Stethoscope } from 'lucide-react';
 import { SCREENS, SETTINGS_PATH, urlOf, viewOf, canOpen, type View } from './appRoutes';
 import { supabase, saveCallRecording } from './supabaseClient';
 import { apiFetch } from './apiClient';
@@ -33,6 +33,8 @@ const GenericBotFlow = lazy(() => import('./GenericBotFlow'));
 const LeadStatusesScreen = lazy(() => import('./LeadStatusesScreen'));
 const LeadsScreen = lazy(() => import('./LeadsScreen'));
 const LeadAssignmentScreen = lazy(() => import('./LeadAssignmentScreen'));
+const AppointmentsScreen = lazy(() => import('./AppointmentsScreen'));
+const ClinicSettingsScreen = lazy(() => import('./ClinicSettingsScreen'));
 import CallModal from './CallModal';
 import DbSyncModal from './DbSyncModal';
 import WebhookSetupModal from './WebhookSetupModal';
@@ -60,6 +62,8 @@ const NAV: Array<{ view: View; label: string; icon: typeof Inbox; tint: string }
   // Managers and the Business Admin: every lead, export and delete.
   { view: 'leads', label: 'Leads', icon: Contact, tint: 'text-teal-200' },
   { view: 'queries', label: 'Queries', icon: ClipboardList, tint: 'text-rose-200' },
+  // Hospitals / clinics only (CLINIC_VIEWS): book patients with doctors, take payments.
+  { view: 'appointments', label: 'Appointments', icon: CalendarDays, tint: 'text-sky-200' },
   { view: 'broadcasts', label: 'Broadcasts', icon: Megaphone, tint: 'text-sky-300' },
   { view: 'analytics', label: 'Analytics', icon: BarChart3, tint: 'text-amber-200' },
   { view: 'ads', label: 'Ads', icon: Target, tint: 'text-orange-200' },
@@ -71,10 +75,14 @@ const NAV: Array<{ view: View; label: string; icon: typeof Inbox; tint: string }
   { view: 'team', label: 'Team', icon: Users, tint: 'text-pink-600' },
   { view: 'lead_statuses', label: 'Lead statuses', icon: Tags, tint: 'text-violet-600' },
   { view: 'lead_assignment', label: 'Lead assignment', icon: Shuffle, tint: 'text-teal-600' },
+  { view: 'clinic', label: 'Clinic', icon: Stethoscope, tint: 'text-rose-600' },
   { view: 'flow', label: 'Bot Flow', icon: GitBranch, tint: 'text-emerald-600' },
   { view: 'bot_config', label: 'Auto-replies', icon: Bot, tint: 'text-amber-600' },
   { view: 'ai', label: 'AI assistant', icon: Sparkles, tint: 'text-violet-600' },
 ];
+
+/** Screens only hospital / clinic businesses get (the server refuses the rest too: /api/clinic). */
+const CLINIC_VIEWS: readonly View[] = ['appointments', 'clinic'];
 
 /** Route guard: a managers' screen opened by an agent (old link, typed address) shows this, never the screen. */
 function ManagersOnly({ allowed, inbox, children }: { allowed: boolean; inbox: string; children: ReactNode }) {
@@ -166,7 +174,8 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
   const appName = useBrandName();
   const setActiveView = useCallback((view: View) => routerNavigate(urlOf(base, view)), [routerNavigate, base]);
   const isManager = canManage(userRole);
-  const allowed = NAV.filter(n => canOpen(n.view, isManager));
+  const clinicOn = !!useApi<{ enabled: boolean }>('/api/clinic/status', { staleTime: 5 * 60000 }).data?.enabled;
+  const allowed = NAV.filter(n => canOpen(n.view, isManager) && (clinicOn || !CLINIC_VIEWS.includes(n.view)));
   const settingsNav = allowed.filter(n => SCREENS[n.view].group === 'settings');
   const activeView: View | null = viewOf(location.pathname, base);
   const inbox = urlOf(base, 'chat');
@@ -547,6 +556,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
     item('pipeline'),
     item('leads'),
     item('queries', { badge: countOf(['overdueQueries', 'newQueries', 'teamQueries']) }),
+    item('appointments'),
   ]);
   const growItems = pick([
     item('broadcasts'),
@@ -554,7 +564,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
     item('analytics'),
   ]);
   // Settings in two plain groups (U4): the business itself, and how the bot / AI answer customers.
-  const settingsBusiness = pick((['setup', 'whatsapp', 'team', 'lead_statuses', 'lead_assignment'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
+  const settingsBusiness = pick((['setup', 'whatsapp', 'team', 'lead_statuses', 'lead_assignment', 'clinic'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
   const settingsBot = pick((['flow', 'bot_config', 'ai'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
   const youItems = pick([item('profile')]);
   const groups: ShellGroup[] = [
@@ -681,6 +691,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
         {screenRoute('broadcasts', <BroadcastsScreen showToast={showToast} />)}
         {screenRoute('analytics', <AnalyticsScreen />)}
         {screenRoute('ads', <AdsScreen userRole={userRole} showToast={showToast} basePath={urlOf(base, 'ads')} />)}
+        {screenRoute('appointments', <AppointmentsScreen isManager={isManager} showToast={showToast} onOpenChat={openChatFromPipeline} />)}
         {screenRoute('profile', <ProfileScreen showToast={showToast} />)}
         {/* Settings area: how the business is configured. */}
         <Route path={`${SETTINGS_PATH}/*`} element={(
@@ -693,6 +704,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
                 {screenRoute('team', <TeamScreen showToast={showToast} />)}
                 {screenRoute('lead_statuses', <LeadStatusesScreen showToast={showToast} />)}
                 {screenRoute('lead_assignment', <LeadAssignmentScreen showToast={showToast} />)}
+                {screenRoute('clinic', <ClinicSettingsScreen isOwner={userRole === 'owner'} showToast={showToast} />)}
                 {screenRoute('flow', (
                   // Arogya Ruchulu's food bot has its own editor; every other business gets the basic flow.
                   // (Wait for the catalog: until then we don't know which bot this business has.)

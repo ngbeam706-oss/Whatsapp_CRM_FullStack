@@ -124,4 +124,18 @@ router.post('/ads/funnel/export', requireManager, gate, validate({ body: B.adsFu
   res.send(funnel.csvOf(r.funnel));
 });
 
+// ---- Manage (M1 + M2; server/adsManage.cjs): campaigns / ad sets / ads like Ads Manager. Managers + Business Admin;
+// rename and end dates: Business Admin only (checked inside). ----
+const manage = require('./adsManage.cjs');
+const manageParams = validate({ params: require('zod').z.object({ level: require('zod').z.enum(['campaign', 'adset', 'ad']), id: require('zod').z.string().regex(/^\d{1,25}$/, 'is not a valid id') }) });
+/** @param {import('express').Response} res @param {any} r */
+const replyM = (res, r) => (r.error ? res.status(r.status || 400).json({ success: false, error: r.error }) : res.json({ success: true, ...r }));
+router.get('/ads/manage', requireManager, gate, async (req, res) => replyM(res, await manage.list(req.staff, {
+  level: req.query.level, parent: req.query.parent, q: req.query.q, delivery: req.query.delivery, days: req.query.days, refresh: req.query.refresh,
+})));
+router.post('/ads/manage/:level/:id/status', requireManager, gate, manageParams, async (req, res) =>
+  replyM(res, await manage.setStatus(req.staff, req.params.level, req.params.id, (req.body || {}).status)));
+router.patch('/ads/manage/:level/:id', requireManager, gate, manageParams, async (req, res) =>
+  replyM(res, await manage.update(req.staff, req.params.level, req.params.id, req.body || {})));
+
 module.exports = router;

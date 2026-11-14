@@ -48,7 +48,7 @@ function matchNumber(pageWhatsApp, numbers) {
 
 /**
  * Pure: turn what Meta answered into the checklist the Ads page shows (tested).
- * @param {{ permissions: string[] | null, accountStatus: number | null, minDailyBudget: number | null, pages: Array<{ id: string, name: string }> | null,
+ * @param {{ permissions: string[] | null, accountStatus: number | null, minDailyBudget: number | null, pages: Array<{ id: string, name: string }> | null, pagesError?: string | null,
  *   selectedPageId: string | null, pageWhatsApp: string | null | undefined, businessNumber: string, currency: string,
  *   numbers?: Array<{ phone: string, label: string, main: boolean }> }} s
  *   numbers: all the business's numbers (several numbers per business); the Page may be linked to any of them.
@@ -79,7 +79,7 @@ function buildChecklist(s) {
   list.push({
     key: 'page', ok: pagesFound && !!selected, label: 'Facebook Page to advertise as',
     detail: !pagesFound
-      ? 'Meta shows no Facebook Page this ad account can advertise for.'
+      ? `Meta shows no Facebook Page this ad account can advertise for.${s.pagesError ? ` Meta says: ${s.pagesError}` : ''}`
       : selected ? `Ads will run as "${selected.name}".` : 'Choose the Page below.',
     fix: pagesFound ? undefined : [
       'Meta Business Settings -> Users -> System users -> the same system user -> Assign assets -> Pages -> your business Page, with permission to create ads.',
@@ -119,6 +119,31 @@ function buildChecklist(s) {
 }
 
 /**
+ * The Pages this ad account can advertise as. Meta's `promote_pages` is often empty for a system-user token even
+ * when the system user has the Page with full access, so we also read the Pages assigned to the token's user
+ * (`me/accounts`) and keep those it may advertise for (task ADVERTISE). Meta still checks when the ad is created.
+ * @param {string} version @param {string} token @param {string} adAccountId
+ * @returns {Promise<{ pages: Array<{ id: string, name: string }>, error: string | null }>}
+ */
+async function adPages(version, token, adAccountId) {
+  const [promote, mine] = await Promise.all([
+    ads.graph(version, token, `${adAccountId}/promote_pages?fields=id,name&limit=50`),
+    ads.graph(version, token, 'me/accounts?fields=id,name,tasks&limit=100'),
+  ]);
+  /** @type {Map<string, { id: string, name: string }>} */
+  const found = new Map();
+  for (const p of promote.error ? [] : promote.data || []) found.set(String(p.id), { id: String(p.id), name: String(p.name || p.id) });
+  for (const p of mine.error ? [] : mine.data || []) {
+    const tasks = Array.isArray(p.tasks) ? p.tasks : null;
+    if (tasks && !tasks.includes('ADVERTISE')) continue;
+    if (!found.has(String(p.id))) found.set(String(p.id), { id: String(p.id), name: String(p.name || p.id) });
+  }
+  const pages = [...found.values()];
+  const error = pages.length ? null : (promote.error || mine.error) ? ads.metaMsg(promote.error ? promote : mine) : null;
+  return { pages, error };
+}
+
+/**
  * The "ready to create ads" check (Business Admin and managers can see it).
  * @param {Staff} staff
  */
@@ -129,12 +154,12 @@ async function readiness(staff) {
   const [perms, acct, pagesRes, number, numbers] = await Promise.all([
     ads.graph(version, token, 'me/permissions'),
     ads.graph(version, token, `${row.ad_account_id}?fields=account_status,min_daily_budget,currency`),
-    ads.graph(version, token, `${row.ad_account_id}/promote_pages?fields=id,name&limit=50`),
+    adPages(version, token, row.ad_account_id),
     businessNumber(ctx.id),
     businessNumbers(ctx.id),
   ]);
   const permissions = perms.error ? null : (perms.data || []).filter((/** @type {Row} */ p) => p.status === 'granted').map((/** @type {Row} */ p) => p.permission);
-  const pages = pagesRes.error ? [] : (pagesRes.data || []).map((/** @type {Row} */ p) => ({ id: String(p.id), name: String(p.name || p.id) }));
+  const { pages, error: pagesError } = pagesRes;
   const currency = acct.currency || row.currency || 'INR';
   const factor = ads.minorFactor(currency);
   // The chosen Page, or the only one when there is exactly one.
@@ -152,7 +177,7 @@ async function readiness(staff) {
   }
   const minDailyBudget = Number.isFinite(Number(acct.min_daily_budget)) && acct.min_daily_budget !== undefined ? Math.ceil(Number(acct.min_daily_budget) / factor) : null;
   const checks = buildChecklist({
-    permissions, accountStatus: acct.error ? null : Number(acct.account_status), minDailyBudget, pages,
+    permissions, accountStatus: acct.error ? null : Number(acct.account_status), minDailyBudget, pages, pagesError,
     selectedPageId, pageWhatsApp, businessNumber: number, currency, numbers,
   });
   const opens = matchNumber(pageWhatsApp, numbers);
@@ -187,8 +212,8 @@ async function choosePage(staff, pageId) {
   const ctx = await ads.controlContext(staff?.businessId);
   if (ctx.error !== undefined) return { error: ctx.error };
   if (!PAGE_ID_RE.test(String(pageId || ''))) return { error: 'Invalid Page.' };
-  const r = await ads.graph(ctx.version, ctx.token, `${ctx.row.ad_account_id}/promote_pages?fields=id,name&limit=50`);
-  const page = (r.data || []).find((/** @type {Row} */ p) => String(p.id) === String(pageId));
+  const { pages } = await adPages(ctx.version, ctx.token, ctx.row.ad_account_id);
+  const page = pages.find(p => p.id === String(pageId));
   if (!page) return { error: 'This ad account cannot advertise for that Page.' };
   const res = await dbRequest(`business_ad_accounts?business_id=eq.${ctx.id}`, { method: 'PATCH', prefer: 'return=minimal', body: { page_id: String(page.id), page_name: String(page.name || '') } });
   if (!res.ok) return { error: 'Could not save. Has the Ads D1 SQL (20261120) been run?' };

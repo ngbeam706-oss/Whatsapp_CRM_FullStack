@@ -51,6 +51,7 @@ global.fetch = async (url, opts = {}) => {
     if (path.startsWith('me/permissions')) return json({ data: meta.permissions.map(permission => ({ permission, status: 'granted' })) });
     if (path.startsWith('act_1111111111?fields=')) return json(meta.account);
     if (path.startsWith('act_1111111111/promote_pages')) return json({ data: meta.pages });
+    if (path.startsWith('me/accounts')) return meta.myPages ? json({ data: meta.myPages }) : json({ error: { message: 'unmocked' } }, 400);
     const page = path.match(/^(\d+)\?fields=whatsapp_number/);
     if (page) return json(meta.pageWhatsApp[page[1]] ? { id: page[1], whatsapp_number: meta.pageWhatsApp[page[1]] } : { id: page[1] });
     return json({ error: { message: 'unmocked' } }, 400);
@@ -123,6 +124,20 @@ test('Page whose primary number is another one, or none: a warning with the fix,
   assert.ok(none.every(c => c.ok !== false), 'the rest being ready, an ad can be created');
   assert.strictEqual(adCreate.buildChecklist({ ...base, pageWhatsApp: undefined }).find(c => c.key === 'whatsapp').ok, null, 'unknown, not failed');
   assert.strictEqual(adCreate.buildChecklist({ ...base, pageWhatsApp: '9701103222' }).find(c => c.key === 'whatsapp').ok, true, 'number without country code still matches');
+});
+
+test('system-user token: promote_pages empty but the Page is assigned with ADVERTISE -> Page found and choosable', async () => {
+  meta.pages = [];
+  meta.myPages = [
+    { id: '55555', name: 'Mayura Hospitals', tasks: ['ADVERTISE', 'ANALYZE', 'CREATE_CONTENT', 'MESSAGING', 'MODERATE', 'MANAGE'] },
+    { id: '88888', name: 'Read-only Page', tasks: ['ANALYZE'] },
+  ];
+  const d = (await request('GET', '/api/ads/create/readiness', 'owner')).json();
+  assert.deepStrictEqual(d.pages, [{ id: '55555', name: 'Mayura Hospitals' }], 'only Pages it may advertise for');
+  assert.strictEqual(d.selectedPageId, '55555');
+  assert.strictEqual(d.checks.find(c => c.key === 'page').ok, true);
+  assert.strictEqual((await request('PUT', '/api/ads/create/page', 'owner', { pageId: '55555' })).status, 200);
+  assert.match((await request('PUT', '/api/ads/create/page', 'owner', { pageId: '88888' })).json().error, /cannot advertise for that Page/);
 });
 
 test('choosing the Page: Business Admin only, and only a Page the ad account can promote', async () => {

@@ -301,7 +301,10 @@ test('desk payments: full fee confirms; a discount is for managers; doctor\'s qu
   assert.deepEqual((await request('GET', `/api/doctor/appointments?day=${day}`, 'c-doctor')).json.appointments, [], 'unpaid bookings aren\'t in the queue');
   assert.equal((await request('POST', `/api/clinic/appointments/${appt.id}/desk-payment`, 'c-agent', { method: 'cash', amount: 300 })).status, 403, 'agent discount refused');
   assert.match((await request('POST', `/api/clinic/appointments/${appt.id}/desk-payment`, 'c-agent', { method: 'cash', amount: 900 })).json.error, /more than the fee/);
-  assert.match((await request('POST', `/api/clinic/appointments/${appt.id}/desk-payment`, 'c-agent', { method: 'other' })).json.error, /how it was paid/);
+  assert.match((await request('POST', `/api/clinic/appointments/${appt.id}/desk-payment`, 'c-agent', { method: 'other' })).json.error, /reference/, 'other needs a reference');
+  assert.match((await request('POST', `/api/clinic/appointments/${appt.id}/desk-payment`, 'c-agent', { method: 'other', receiptNo: 'UTR12345' })).json.error, /how it was paid/);
+  assert.match((await request('POST', `/api/clinic/appointments/${appt.id}/desk-payment`, 'c-agent', { method: 'upi_desk' })).json.error, /reference/, 'PhonePe / UPI needs its transaction ID');
+  assert.match((await request('POST', `/api/clinic/appointments/${appt.id}/desk-payment`, 'c-agent', { method: 'card_desk', receiptNo: 'ab' })).json.error, /at least 4/);
   const paid = await request('POST', `/api/clinic/appointments/${appt.id}/desk-payment`, 'c-agent', { method: 'cash', receiptNo: 'R-101' });
   assert.equal(paid.status, 200, paid.text);
   assert.equal(paid.json.appointment.status, 'confirmed');
@@ -350,6 +353,71 @@ test('Razorpay: Business Admin only, keys checked and encrypted; link amount = f
   assert.deepEqual([db.clinic_payments[0].status, db.clinic_payments[0].razorpay_payment_id], ['paid', 'pay_123']);
   const replay = await request('POST', `/webhook/razorpay/${row.webhook_key}`, null, event, { 'X-Razorpay-Signature': sign('whsec_sunrise', event) });
   assert.equal(replay.json.already, true, 'a repeated webhook changes nothing');
+});
+
+test('payment type chosen when booking: saved and shown; online needs Razorpay; PhonePe / UPI marked paid with its transaction ID', async () => {
+  const id = await setUpDoctor();
+  const { nine, nineFifteen } = nextMonday();
+  assert.match((await request('POST', '/api/clinic/appointments', 'c-agent', { phone: '919000000001', doctorId: id, startsAt: nine, ...PATIENT, payMethod: 'razorpay_link' })).json.error, /needs Razorpay/);
+  assert.match((await request('POST', '/api/clinic/appointments', 'c-agent', { phone: '919000000001', doctorId: id, startsAt: nine, ...PATIENT, payMethod: 'bitcoin' })).json.error, /how the patient will pay/);
+  const b = await request('POST', '/api/clinic/appointments', 'c-agent', { phone: '919000000001', doctorId: id, startsAt: nine, ...PATIENT, payMethod: 'upi_desk' });
+  assert.equal(b.status, 200, b.text);
+  assert.deepEqual([b.json.appointment.paymentMethod, b.json.appointment.status], ['upi_desk', 'pending_payment']);
+  const paid = await request('POST', `/api/clinic/appointments/${b.json.appointment.id}/desk-payment`, 'c-agent', { method: 'upi_desk', receiptNo: 'T2611141234567' });
+  assert.equal(paid.status, 200, paid.text);
+  assert.deepEqual(paid.json.appointment.payments.map(p => [p.method, p.receiptNo, p.status]), [['upi_desk', 'T2611141234567', 'recorded']]);
+  assert.equal(paid.json.appointment.status, 'confirmed');
+  // With Razorpay connected, online is allowed.
+  await request('PUT', '/api/clinic/razorpay', 'c-owner', { keyId: 'rzp_test_AbCdEf123456', keySecret: 'secret_value_123' });
+  const online = await request('POST', '/api/clinic/appointments', 'c-agent', { phone: '919000000001', doctorId: id, startsAt: nineFifteen, ...PATIENT, payMethod: 'razorpay_link' });
+  assert.equal(online.json.appointment.paymentMethod, 'razorpay_link');
+});
+
+test('no free times: says when the doctor has no hours, else the next free day', async () => {
+  const id = await setUpDoctor(); // Monday 09:00-10:00
+  const { day } = nextMonday();
+  const sunday = clinic.istDay(clinic.istMoment(day, 0) - 12 * 3600000);
+  const r = await request('GET', `/api/clinic/doctors/${id}/slots?day=${sunday}`, 'c-agent');
+  assert.deepEqual([r.json.slots.length, r.json.noHours, r.json.nextFreeDay], [0, false, day]);
+  await request('PUT', '/api/doctor/hours', 'c-doctor', { hours: [] });
+  const none = await request('GET', `/api/clinic/doctors/${id}/slots?day=${sunday}`, 'c-agent');
+  assert.equal(none.json.noHours, true);
+});
+
+const report = require('../server/clinicReport.cjs');
+test('collections report: money by payment type / person / doctor, discounts, waiting, show rate, daily; managers only', async () => {
+  const docs = new Map([['d1', 'Dr Rao'], ['d2', 'Dr Iyer']]);
+  const at = (h) => `2026-11-16T0${h}:00:00.000Z`;
+  const appointments = [
+    { id: 'a1', doctor_id: 'd1', patient_name: 'Asha', starts_at: at(4), status: 'completed', fee_paise: 50000 },
+    { id: 'a2', doctor_id: 'd1', patient_name: 'Ravi', starts_at: at(5), status: 'no_show', fee_paise: 50000 },
+    { id: 'a3', doctor_id: 'd2', patient_name: 'Sita', starts_at: at(6), status: 'pending_payment', fee_paise: 30000 },
+    { id: 'a4', doctor_id: 'd2', patient_name: 'Gopi', starts_at: at(7), status: 'cancelled', fee_paise: 30000 },
+  ];
+  const payments = [
+    { id: 'p1', appointment_id: 'a1', method: 'cash', amount_paise: 50000, status: 'recorded', recorded_by: 'a@sun.test', paid_at: at(4) },
+    { id: 'p2', appointment_id: 'a2', method: 'upi_desk', amount_paise: 40000, status: 'recorded', receipt_no: 'T123456', recorded_by: 'm@sun.test', paid_at: at(5) },
+    { id: 'p3', appointment_id: 'a9', method: 'razorpay_link', amount_paise: 30000, status: 'paid', razorpay_payment_id: 'pay_1', paid_at: at(6) },
+  ];
+  const out = report.buildReport({ from: '2026-11-16', days: 1, appointments, payments, paidAppointments: [{ id: 'a9', doctor_id: 'd2', patient_name: 'Lata', starts_at: '2026-11-20T04:00:00.000Z', status: 'confirmed', fee_paise: 30000 }], doctors: docs });
+  assert.deepEqual(out.totals, { collected: 1200, payments: 3, discount: 100, waiting: 300, appointments: 3, waitingPayment: 1, confirmed: 0, seen: 1, noShow: 1, cancelled: 1, showRate: 50 });
+  assert.deepEqual(out.byMethod.map(m => [m.method, m.amount]), [['cash', 500], ['upi_desk', 400], ['razorpay_link', 300]]);
+  assert.deepEqual(out.byPerson.map(p => [p.person, p.cash, p.amount]), [['a@sun.test', 500, 500], ['m@sun.test', 0, 400], ['Online (Razorpay)', 0, 300]]);
+  assert.deepEqual(out.byDoctor.map(d => [d.doctor, d.booked, d.seen, d.noShow, d.cancelled, d.collected]), [['Dr Rao', 2, 1, 1, 0, 900], ['Dr Iyer', 1, 0, 0, 1, 300]]);
+  assert.deepEqual(out.payments.map(p => [p.patientName, p.reference]), [['Lata', 'pay_1'], ['Ravi', 'T123456'], ['Asha', '']], 'an advance payment for another day shows its patient');
+  assert.match(report.rangeOf({ from: '2026-01-01', to: '2026-12-31' }).error, /at most/);
+  // API: managers only; tenancy by business.
+  assert.equal((await request('GET', '/api/clinic/report', 'c-agent')).status, 403);
+  const id = await setUpDoctor();
+  const { day, nine } = nextMonday();
+  const b = await request('POST', '/api/clinic/appointments', 'c-agent', { phone: '919000000001', doctorId: id, startsAt: nine, ...PATIENT, payMethod: 'cash' });
+  await request('POST', `/api/clinic/appointments/${b.json.appointment.id}/desk-payment`, 'c-agent', { method: 'cash' });
+  const today = clinic.istDay(Date.now());
+  const r = await request('GET', `/api/clinic/report?from=${today}&to=${today}`, 'c-manager');
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual([r.json.totals.collected, r.json.byPerson[0].person, r.json.byPerson[0].cash], [500, 'a@sun.test', 500], 'paid today for a future visit counts today');
+  assert.equal((await request('GET', `/api/clinic/report?from=${day}&to=${day}`, 'c-manager')).json.totals.appointments, 1);
+  assert.equal((await request('GET', '/api/clinic/report', 'c-lotus')).status, 403);
 });
 
 test('"Check payment" asks Razorpay; cancelling an unpaid booking cancels its link and frees the slot', async () => {

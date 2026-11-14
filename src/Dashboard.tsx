@@ -1,9 +1,10 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { ShieldOff } from 'lucide-react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import AuthGate, { SignOutButton } from './AuthGate';
+import { takeJustSignedIn } from './signInFlag';
 import { queryClient } from './queryClient';
 import { AREA_LABEL, AREA_OF_ROLE, LEGACY_BASE, areaOf, type Area } from './appRoutes';
 import type { Role } from './types';
@@ -40,10 +41,19 @@ export default function Dashboard() {
 
 function AreaGate({ email, area, role, signOut }: { email: string; area: Area; role: Role; signOut: () => void }) {
   const { pathname, search } = useLocation();
+  // Read once per sign-in (AuthGate marks it when the sign-in form succeeds).
+  const [justSignedIn] = useState(takeJustSignedIn);
   const asked = areaOf(pathname);
   const home = `/${area}`;
   // Old links (/app/ads) and the bare sign-in address move to your own area, same page.
   if (asked === 'legacy') return <Navigate to={`${home}${pathname.slice(LEGACY_BASE.length)}${search}`} replace />;
+  // Just signed in on a page left at another role's address (e.g. the agent who signed out before): go to your
+  // own area, the same screen when your role has it (business areas share their screen addresses).
+  if (asked !== area && justSignedIn) {
+    const business = (a: Area | null) => a === 'admin' || a === 'manager' || a === 'agent';
+    const rest = asked && business(asked) && business(area) ? pathname.slice(asked.length + 1) : '';
+    return <Navigate to={`${home}${rest}`} replace />;
+  }
   if (asked !== area) return <NotAllowed asked={asked} home={home} email={email} signOut={signOut} />;
   if (area === 'platform') {
     return <Suspense fallback={null}><PlatformConsole base={home} email={email} onSignOut={signOut} /></Suspense>;

@@ -15,7 +15,7 @@ export default function ChatAppointmentButton({ phone, name, disabled, showToast
         <CalendarPlus className="w-4 h-4" />
       </button>
       {open && <BookAppointmentModal phone={phone} patientName={name} onClose={() => setOpen(false)}
-        onBooked={(a) => { setOpen(false); showToast(a.status === 'confirmed' ? 'Appointment booked and confirmed' : 'Appointment booked: send the payment link from Appointments'); }} />}
+        onBooked={(a, warning) => { setOpen(false); showToast(warning || (a.status === 'confirmed' ? 'Appointment booked and confirmed' : a.paymentMethod === 'razorpay_link' ? 'Appointment booked: payment link sent in the chat' : 'Appointment booked: mark it paid in Appointments when the patient pays')); }} />}
     </>
   );
 }

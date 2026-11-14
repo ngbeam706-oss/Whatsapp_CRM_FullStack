@@ -229,7 +229,7 @@ async function createBusiness(admin, input = {}) {
   if (!(await planExists(planId))) return { error: 'Choose a plan.' };
   const adminEmail = String(input.adminEmail || '').trim().toLowerCase();
   if (!team.isEmail(adminEmail)) return { error: 'Enter the Business Admin\'s email address.' };
-  const industry = ['hospital', 'food', 'retail', 'services', 'general'].includes(input.industry) ? input.industry : 'general';
+  const industry = INDUSTRIES.includes(input.industry) ? input.industry : 'general';
 
   const ins = await dbRequest('businesses', {
     method: 'POST', prefer: 'return=representation',
@@ -288,6 +288,42 @@ async function updateBusiness(admin, rawId, input = {}) {
   // A business that was just suspended stops sending at once.
   require('./whatsapp.cjs').clearCache(id);
   require('./limits.cjs').clearCache(id);
+  return { business: res.data[0] };
+}
+
+const INDUSTRIES = ['hospital', 'food', 'retail', 'services', 'general'];
+
+/**
+ * A business's basic details: its name and business type (industry). Platform Owner and Application Manager
+ * (onboarding). The type decides the Clinic tools (hospital) and Meta's healthcare ad rules; existing data stays.
+ * Plan, status, limits and payment stay Platform Owner only (updateBusiness).
+ * @param {{ email: string }} admin @param {unknown} rawId @param {Input} [input]
+ */
+async function updateDetails(admin, rawId, input = {}) {
+  if (!isBusinessId(rawId)) return { error: 'Invalid business.' };
+  const id = String(rawId);
+  const cur = await dbRequest(`businesses?id=eq.${id}&select=name,industry`);
+  const before = cur.ok && Array.isArray(cur.data) ? cur.data[0] : null;
+  if (!before) return { error: 'Business not found.' };
+  /** @type {Record<string, unknown>} */
+  const body = {};
+  if ('name' in input) {
+    const name = String(input.name || '').trim().replace(/\s+/g, ' ');
+    if (name.length < 2 || name.length > 80) return { error: 'Business name must be 2 to 80 characters.' };
+    if (name !== before.name) body.name = name;
+  }
+  if ('industry' in input) {
+    const industry = String(input.industry || '');
+    if (!INDUSTRIES.includes(industry)) return { error: 'Pick the business type: hospital, food, retail, services or general.' };
+    if (industry !== before.industry) body.industry = industry;
+  }
+  if (!Object.keys(body).length) return { business: { id, ...before }, unchanged: true };
+  const res = await dbRequest(`businesses?id=eq.${id}`, { method: 'PATCH', prefer: 'return=representation', body: { ...body, updated_at: new Date().toISOString() } });
+  if (!res.ok || !res.data?.length) return { error: 'Business not found.' };
+  /** @type {Record<string, unknown>} */
+  const details = {};
+  for (const k of Object.keys(body)) details[k] = { from: before[k] ?? null, to: body[k] };
+  await audit(admin, id, 'business.details_changed', details);
   return { business: res.data[0] };
 }
 
@@ -429,6 +465,7 @@ module.exports = {
   overview,
   createBusiness,
   updateBusiness,
+  updateDetails,
   updatePlan,
   slugify,
   countRows,

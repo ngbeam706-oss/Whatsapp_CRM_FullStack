@@ -21,6 +21,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ACTIVE = ['pending_payment', 'confirmed', 'completed'];
 const DESK_METHODS = ['cash', 'upi_desk', 'card_desk', 'other'];
+const PAY_METHODS = ['razorpay_link', ...DESK_METHODS];
 const NOT_CLINIC = 'Appointments are for hospital and clinic businesses only.';
 /** @param {unknown} e */
 const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || ''));
@@ -441,7 +442,20 @@ async function slots(staff, doctorId, day) {
   if (!DAY_RE.test(d)) return { error: 'Pick a date.' };
   const doctor = await doctorRow(biz, doctorId);
   if (!doctor || !doctor.active) return { error: 'Doctor not found.', status: 404 };
-  return { day: d, slots: await slotsFor(biz, doctor, d) };
+  const list = await slotsFor(biz, doctor, d);
+  if (list.length) return { day: d, slots: list };
+  // Nothing free that day: say why (no hours at all?) and the doctor's next free day within 60 days.
+  const { hours, daysOff } = await hoursOf(biz, doctor.id);
+  if (!hours.length) return { day: d, slots: [], noHours: true, nextFreeDay: null };
+  const from = new Date(istMoment(d, 0) + DAY_MS).toISOString(); const to = new Date(istMoment(d, 0) + 61 * DAY_MS).toISOString();
+  const taken = await dbRequest(`clinic_appointments?business_id=eq.${biz}&doctor_id=eq.${doctor.id}&status=in.(${ACTIVE.join(',')})&starts_at=gte.${from}&starts_at=lt.${to}&select=starts_at,ends_at`);
+  const busy = taken.ok && Array.isArray(taken.data) ? taken.data : [];
+  let next = null;
+  for (let i = 1; i <= 60 && !next; i++) {
+    const day2 = istDay(istMoment(d, 0) + i * DAY_MS + 12 * 3600000);
+    if (freeSlots({ day: day2, hours, daysOff, taken: busy, slotMinutes: doctor.slot_minutes, now: Date.now() }).length) next = day2;
+  }
+  return { day: d, slots: [], noHours: false, nextFreeDay: next };
 }
 
 /** What staff see of an appointment, with its payments. @param {any} a @param {any[]} payments @param {Map<string, string>} names */
@@ -449,6 +463,7 @@ const apptView = (a, payments, names) => ({
   id: a.id, doctorId: a.doctor_id, doctorName: names.get(a.doctor_id) || '', phone: a.lead_phone, patientName: a.patient_name,
   startsAt: a.starts_at, endsAt: a.ends_at, status: a.status, fee: a.fee_paise / 100, note: a.note || '', bookedBy: a.booked_by,
   confirmedAt: a.confirmed_at, cancelledReason: a.cancelled_reason || '', patientId: a.patient_id || null, reason: a.reason || '',
+  paymentMethod: a.payment_method || null,
   followUpOn: a.follow_up_on || null, followUpNote: a.follow_up_note || '',
   payments: payments.filter(p => p.appointment_id === a.id).map(p => ({
     id: p.id, method: p.method, amount: p.amount_paise / 100, status: p.status, link: p.status === 'created' ? p.short_url : null,
@@ -514,6 +529,13 @@ async function book(staff, input = {}) {
   if (!Number.isFinite(startsMs)) return { error: 'Pick a time slot.' };
   const reason = cleanText(input.reason, 300);
   if (reason.length < 3) return { error: 'Enter the reason for the visit (what the patient wants to see the doctor about).' };
+  // How the patient will pay: online (Razorpay link) or at the desk (cash / PhonePe-UPI / card / other).
+  const payMethod = input.payMethod === undefined || input.payMethod === null || input.payMethod === '' ? null : String(input.payMethod);
+  if (payMethod !== null && !PAY_METHODS.includes(payMethod)) return { error: 'Pick how the patient will pay.' };
+  if (payMethod === 'razorpay_link' && doctor.fee_paise > 0) {
+    const s = await dbRequest(`clinic_settings?business_id=eq.${biz}&select=razorpay_key_id`);
+    if (!(s.ok && s.data?.[0]?.razorpay_key_id)) return { error: 'Online payment needs Razorpay. The Business Admin connects it in Settings → Clinic; pick another way to pay for now.' };
+  }
   const access = await require('./inbox.cjs').ensureCanAct(phone, staff);
   if (access.error !== undefined) return access;
   const day = istDay(startsMs);
@@ -526,15 +548,17 @@ async function book(staff, input = {}) {
   const patientName = patient.name;
   const free0 = doctor.fee_paise === 0;
   const now = new Date().toISOString();
-  const ins = await dbRequest('clinic_appointments', {
-    method: 'POST', prefer: 'return=representation',
-    body: {
-      business_id: biz, doctor_id: doctor.id, lead_phone: phone, patient_name: patientName,
-      starts_at: new Date(startsMs).toISOString(), ends_at: new Date(startsMs + doctor.slot_minutes * 60000).toISOString(),
-      status: free0 ? 'confirmed' : 'pending_payment', fee_paise: doctor.fee_paise, note: cleanText(input.note, 300) || null,
-      booked_by: emailOf(staff), confirmed_at: free0 ? now : null, patient_id: patient.id, reason,
-    },
-  });
+  /** @type {Record<string, unknown>} */
+  const row = {
+    business_id: biz, doctor_id: doctor.id, lead_phone: phone, patient_name: patientName,
+    starts_at: new Date(startsMs).toISOString(), ends_at: new Date(startsMs + doctor.slot_minutes * 60000).toISOString(),
+    status: free0 ? 'confirmed' : 'pending_payment', fee_paise: doctor.fee_paise, note: cleanText(input.note, 300) || null,
+    booked_by: emailOf(staff), confirmed_at: free0 ? now : null, patient_id: patient.id, reason,
+  };
+  if (payMethod && !free0) row.payment_method = payMethod;
+  let ins = await dbRequest('clinic_appointments', { method: 'POST', prefer: 'return=representation', body: row });
+  // Before SQL 20261141 there is no payment_method column: book without it.
+  if (!ins.ok && ins.status !== 409 && 'payment_method' in row) { delete row.payment_method; ins = await dbRequest('clinic_appointments', { method: 'POST', prefer: 'return=representation', body: row }); }
   if (!ins.ok || !ins.data?.length) {
     if (ins.status === 409) return { error: 'That time was just booked by someone else. Pick another slot.' };
     return { error: 'Could not book the appointment.' };
@@ -590,13 +614,16 @@ async function recordDeskPayment(staff, id, input = {}) {
   if (!a) return { error: 'Appointment not found.', status: 404 };
   if (a.status !== 'pending_payment') return { error: 'This appointment is not waiting for a payment.' };
   const method = String(input.method || '');
-  if (!DESK_METHODS.includes(method)) return { error: 'Pick how the patient paid (cash, UPI at the desk, card or other).' };
+  if (!DESK_METHODS.includes(method)) return { error: 'Pick how the patient paid (cash, PhonePe / UPI, card or other).' };
+  // Every way except cash leaves a trace: its reference / transaction ID is required.
+  const reference = cleanText(input.receiptNo, 40);
+  if (method !== 'cash' && reference.length < 4) return { error: 'Enter the payment\'s reference / transaction ID (at least 4 characters).' };
   const amount = input.amount === undefined || input.amount === '' ? a.fee_paise : toPaise(input.amount);
   if (amount === null || amount <= 0) return { error: 'Enter the amount received in rupees.' };
   if (amount > a.fee_paise) return { error: `The amount is more than the fee (₹${a.fee_paise / 100}).` };
   if (amount < a.fee_paise && !isManager(staff)) return { error: 'Only a manager can take less than the fee (a discount).', status: 403 };
   const note = cleanText(input.note, 200);
-  if (method === 'other' && !note) return { error: 'Say how it was paid.' };
+  if (method === 'other' && !note) return { error: 'Say how it was paid (e.g. Google Pay, bank transfer).' };
   if (!isManager(staff)) {
     const access = await require('./inbox.cjs').ensureCanAct(a.lead_phone, staff);
     if (access.error !== undefined) return access;
@@ -609,7 +636,7 @@ async function recordDeskPayment(staff, id, input = {}) {
   if (!conf.ok || !conf.data?.length) return { error: 'This appointment was just paid or changed. Refresh to see it.' };
   const ins = await dbRequest('clinic_payments', {
     method: 'POST', prefer: 'return=minimal',
-    body: { business_id: biz, appointment_id: a.id, method, amount_paise: amount, status: 'recorded', receipt_no: cleanText(input.receiptNo, 40) || null, note: note || null, recorded_by: emailOf(staff), paid_at: now },
+    body: { business_id: biz, appointment_id: a.id, method, amount_paise: amount, status: 'recorded', receipt_no: reference || null, note: note || null, recorded_by: emailOf(staff), paid_at: now },
   });
   if (!ins.ok) {
     await dbRequest(`clinic_appointments?business_id=eq.${biz}&id=eq.${a.id}`, { method: 'PATCH', prefer: 'return=minimal', body: { status: 'pending_payment', confirmed_at: null } });

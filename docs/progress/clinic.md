@@ -94,6 +94,32 @@ doctor's profile)
   sheet); e2e "Clinic: an agent books…" (patient form + follow-ups tab) and "Clinic: a doctor signs in…" (visit page,
   photo upload, follow-up, earlier sheet, hours).
 
+## Payment type at booking (2026-11-14, local, NOT deployed; SQL 20261141 not run)
+- Booking form → **Payment**: Online payment (Razorpay) / Cash / PhonePe / UPI / Card / Other (only when the fee is
+  above 0). Saved as `clinic_appointments.payment_method` (SQL `20261141_clinic_payment_method.sql`; booking still
+  works without the column).
+- **Online:** only when Razorpay is connected; the link is created and sent in the chat right after booking; Razorpay
+  confirms it by itself (webhook / "Check payment").
+- **Desk ways:** the appointment waits for payment ("Will pay by …"), and staff press **Mark as paid** when it comes
+  in (the chosen way is preselected). "Already paid now" in the booking form records it at once.
+- **Reference ID required** for every way except cash (PhonePe / UPI transaction ID, card slip number, bank UTR…,
+  at least 4 characters; "Other" also needs how it was paid). Stored on the payment (`receipt_no`), shown as
+  "ref …" in the list.
+- Tests: `tests/clinic.test.cjs` (+ payment-type test, reference rules); e2e "Clinic: an agent books…, picks PhonePe /
+  UPI and marks it paid with the transaction ID".
+
+## Collections + booking hints (2026-11-14, local, NOT deployed; no SQL)
+- **Appointments → Collections** (managers + Business Admin; `server/clinicReport.cjs`, `GET /api/clinic/report`,
+  `src/ClinicCollections.tsx`): Today / Yesterday / Last 7 / Last 30 days / pick dates (≤ 92 days).
+  - Money paid in the range: collected, discounts, by payment type, by who took it (cash to hand over), by doctor,
+    every payment with patient, doctor, type, reference and who took it. A payment counts on the day it was paid
+    (an advance for a later visit counts today).
+  - Appointments scheduled in the range: booked, confirmed-not-seen, seen, no-shows (show rate), cancelled, money
+    still waiting; day-by-day bars for ranges.
+- **Booking form:** "Still needed: …" next to Book (so it's clear why it's off); when a day has no free times it
+  says whether the doctor has no hours at all, else jumps to the **next free day** (looks 60 days ahead).
+- Tests: `tests/clinic.test.cjs` (report math + roles + tenancy, next free day); e2e "Clinic Collections (managers)".
+
 ## Next
 - User: run SQL 20261139 then 20261140; set CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET in
   Netlify (and `.env` for local); then (Business Admin) Settings → Clinic: add doctors, Razorpay **test** keys + webhook.

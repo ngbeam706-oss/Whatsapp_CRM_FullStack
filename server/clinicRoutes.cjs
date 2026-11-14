@@ -27,7 +27,8 @@ staffRouter.post('/clinic/appointments/:id/status', id, async (req, res) => repl
 staffRouter.post('/clinic/appointments/:id/desk-payment', id, async (req, res) => reply(res, await clinic.recordDeskPayment(req.staff, String(req.params.id), req.body || {})));
 staffRouter.post('/clinic/appointments/:id/payment-link', id, async (req, res) => reply(res, await pay.paymentLink(req.staff, String(req.params.id), req.body || {})));
 staffRouter.post('/clinic/appointments/:id/check-payment', id, async (req, res) => reply(res, await pay.checkPayment(req.staff, String(req.params.id))));
-staffRouter.get('/clinic/patients', async (req, res) => reply(res, await patients.patientsForPhone(req.staff, req.query.phone)));
+staffRouter.get('/clinic/report', requireManager, async (req, res) => reply(res, await require('./clinicReport.cjs').report(req.staff, { from: req.query.from, to: req.query.to })));
+staffRouter.get('/clinic/patients',async (req, res) => reply(res, await patients.patientsForPhone(req.staff, req.query.phone)));
 staffRouter.get('/clinic/follow-ups', async (req, res) => reply(res, await patients.followUps(req.staff, { scope: req.query.scope })));
 staffRouter.post('/clinic/appointments/:id/follow-up-done', id, async (req, res) => reply(res, await patients.followUpDone(req.staff, String(req.params.id))));
 

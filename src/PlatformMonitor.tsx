@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useConfirm } from './confirm';
 import {
   Activity, AlertTriangle, AlertOctagon, CheckCircle2, XCircle, Database, Server, Cpu, Smartphone, Megaphone, Bot,
-  ScrollText, History, Send, X, RefreshCw, Webhook, Search, type LucideIcon,
+  ScrollText, History, Send, X, RefreshCw, Webhook, Search, Building2, type LucideIcon,
 } from 'lucide-react';
 import { api, errorMessage, inputInlineCls, btnSecondary } from './broadcastUtils';
 import { useVisiblePolling, REFRESH } from './usePolling';
@@ -441,9 +441,55 @@ const LIMIT_LABELS: Array<[LimitKey, string]> = [
 ];
 
 /** canEdit: plan, paid-until, suspend, limit overrides (Platform Owner). canResendInvite: owner + Application Managers. */
-interface BusinessDrawerProps { id: string; plans: Plan[]; onClose: () => void; onChanged: () => void; showToast: ShowToast; canEdit?: boolean; canResendInvite?: boolean }
+interface BusinessDrawerProps { id: string; plans: Plan[]; onClose: () => void; onChanged: () => void; showToast: ShowToast; canEdit?: boolean; canResendInvite?: boolean; canEditDetails?: boolean }
 
-export function BusinessDrawer({ id, plans, onClose, onChanged, showToast, canEdit = true, canResendInvite = false }: BusinessDrawerProps) {
+/** Business types (businesses.industry). The type decides the Clinic tools (Healthcare) and Meta's healthcare ad rules. */
+const INDUSTRY_LABEL: Record<string, string> = { hospital: 'Healthcare (hospital / clinic)', food: 'Food', retail: 'Retail', services: 'Services', general: 'Other' };
+
+/** Name + business type: Platform Owner and Application Manager. Changing the type asks first and says what changes. */
+function DetailsCard({ id, name: savedName, industry: savedIndustry, onSaved, showToast }: { id: string; name: string; industry: string; onSaved: (msg: string) => void; showToast: ShowToast }) {
+  const confirm = useConfirm();
+  const [name, setName] = useState(savedName);
+  const [industry, setIndustry] = useState(savedIndustry);
+  const [busy, setBusy] = useState(false);
+  const changed = name.trim() !== savedName || industry !== savedIndustry;
+  const save = async () => {
+    if (industry !== savedIndustry) {
+      const toClinic = industry === 'hospital';
+      const fromClinic = savedIndustry === 'hospital';
+      const ok = await confirm({
+        title: `Change the business type to ${INDUSTRY_LABEL[industry]}?`,
+        body: toClinic ? 'The business gets the Clinic tools (doctors, appointments, payments) and Meta\'s healthcare rules for its ads.'
+          : fromClinic ? 'The Clinic tools disappear for this business and its doctors can no longer sign in. Their appointments and case sheets are kept and come back if you switch it back.'
+            : 'Only the label changes; nothing else does.',
+        confirmLabel: 'Change type', danger: fromClinic,
+      });
+      if (!ok) return;
+    }
+    setBusy(true);
+    try {
+      await api(`/api/platform/businesses/${id}/details`, { method: 'PATCH', body: { name: name.trim(), industry } });
+      onSaved('Business details saved');
+    } catch (e) { showToast(errorMessage(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Card title="Business details" icon={Building2} right={<button disabled={busy || !changed} onClick={save} className={btnSecondary}>{busy ? 'Saving…' : 'Save'}</button>}>
+      <div className="grid sm:grid-cols-2 gap-2 text-xs" data-testid="business-details">
+        <label className="flex flex-col gap-1">Business name
+          <input value={name} onChange={e => setName(e.target.value)} maxLength={80} className={inputInlineCls} aria-label="Business name" />
+        </label>
+        <label className="flex flex-col gap-1">Business type
+          <select value={industry} onChange={e => setIndustry(e.target.value)} className={inputInlineCls} aria-label="Business type">
+            {Object.entries(INDUSTRY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </label>
+      </div>
+      <p className="text-xs text-slate-500 mt-2">Healthcare turns on the Clinic tools (doctors, appointments, payments) and Meta's healthcare ad rules.</p>
+    </Card>
+  );
+}
+
+export function BusinessDrawer({ id, plans, onClose, onChanged, showToast, canEdit = true, canResendInvite = false, canEditDetails = canEdit }: BusinessDrawerProps) {
   const confirm = useConfirm();
   const [d, setD] = useState<BusinessDetail | null>(null);
   const [error, setError] = useState('');
@@ -505,7 +551,8 @@ export function BusinessDrawer({ id, plans, onClose, onChanged, showToast, canEd
         {!d && !error && <div className="text-sm text-slate-500">Loading…</div>}
         {d && b && (
           <>
-            <div className="text-xs text-slate-500">{b.slug} · {b.industry} · created {new Date(b.created_at).toLocaleDateString()} by {b.created_by || '–'}</div>
+            <div className="text-xs text-slate-500">{b.slug} · {INDUSTRY_LABEL[b.industry || 'general'] || b.industry} · created {new Date(b.created_at).toLocaleDateString()} by {b.created_by || '–'}</div>
+            {canEditDetails && <DetailsCard key={`${b.name}|${b.industry}`} id={id} name={b.name} industry={b.industry || 'general'} onSaved={async (msg) => { showToast(msg); await load(); onChanged(); }} showToast={showToast} />}
             {d.alerts.length > 0 && <Card title="Alerts" icon={AlertTriangle}><AlertList alerts={d.alerts} /></Card>}
 
             <Card title="Plan and billing" icon={ScrollText}>

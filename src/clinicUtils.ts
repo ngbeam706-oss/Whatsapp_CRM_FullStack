@@ -34,7 +34,7 @@ export const APPT_STATUS: Record<ApptStatus, { label: string; cls: string }> = {
 };
 
 export const PAY_METHOD: Record<string, string> = {
-  razorpay_link: 'Online (Razorpay)', cash: 'Cash', upi_desk: 'UPI at the desk', card_desk: 'Card at the desk', other: 'Other',
+  razorpay_link: 'Online payment (Razorpay)', cash: 'Cash', upi_desk: 'PhonePe / UPI', card_desk: 'Card', other: 'Other',
 };
 
 export const GENDER_LABEL: Record<string, string> = { female: 'Female', male: 'Male', other: 'Other' };
@@ -76,5 +76,5 @@ export interface Payment { id: string; method: string; amount: number; status: s
 export interface Appointment {
   id: string; doctorId: string; doctorName: string; phone: string; patientName: string; startsAt: string; endsAt: string;
   status: ApptStatus; fee: number; note: string; bookedBy: string; confirmedAt: string | null; cancelledReason: string; payments: Payment[];
-  patientId: string | null; reason: string; followUpOn: string | null; followUpNote: string;
+  patientId: string | null; reason: string; followUpOn: string | null; followUpNote: string; paymentMethod?: string | null;
 }

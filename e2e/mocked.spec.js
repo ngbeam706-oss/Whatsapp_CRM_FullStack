@@ -2885,7 +2885,7 @@ test('Inbox: rename a contact in the chat header (WhatsApp name shown under it),
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const CLINIC_DOCTOR = { id: 'd0000000-0000-4000-8000-000000000001', name: 'Dr Rao', specialty: 'General', fee: 500, slotMinutes: 15, active: true, loginReady: true };
 
-test('Clinic: an agent books a patient with a doctor and records a cash payment at the desk', async ({ page }) => {
+test('Clinic: an agent books a patient with a doctor, picks PhonePe / UPI and marks it paid with the transaction ID', async ({ page }) => {
   const errors = watchErrors(page);
   await fakeBackend(page, { role: 'agent' });
   const slotAt = new Date(Date.now() + 3 * 3600000).toISOString();
@@ -2901,13 +2901,13 @@ test('Clinic: an agent books a patient with a doctor and records a cash payment 
     if (path === '/api/clinic/follow-ups') return route.fulfill({ json: { success: true, followUps: [{ appointmentId: 'ap0', patientId: 'pa0', phone: '919000000001', patientName: 'Ravi Kumar', doctorId: CLINIC_DOCTOR.id, doctorName: 'Dr Rao', lastVisit: NOW, due: istToday(), note: 'Bring blood report', overdue: false, dueToday: true }] } });
     if (path === '/api/clinic/appointments' && req.method() === 'POST') {
       const b = req.postDataJSON(); sent.book.push(b);
-      const a = { id: 'ap000000-0000-4000-8000-000000000001', doctorId: b.doctorId, doctorName: 'Dr Rao', phone: b.phone, patientName: b.patient.name, startsAt: b.startsAt, endsAt: b.startsAt, status: 'pending_payment', fee: 500, note: b.note, reason: b.reason, patientId: 'pa1', followUpOn: null, followUpNote: '', bookedBy: 'agent@e2e.test', confirmedAt: null, cancelledReason: '', payments: [] };
+      const a = { id: 'ap000000-0000-4000-8000-000000000001', doctorId: b.doctorId, doctorName: 'Dr Rao', phone: b.phone, patientName: b.patient.name, startsAt: b.startsAt, endsAt: b.startsAt, status: 'pending_payment', fee: 500, note: b.note, reason: b.reason, patientId: 'pa1', paymentMethod: b.payMethod || null, followUpOn: null, followUpNote: '', bookedBy: 'agent@e2e.test', confirmedAt: null, cancelledReason: '', payments: [] };
       appts = [a];
       return route.fulfill({ json: { success: true, appointment: a } });
     }
     if (path.endsWith('/desk-payment')) {
       sent.desk.push(req.postDataJSON());
-      appts = appts.map(a => ({ ...a, status: 'confirmed', payments: [{ id: 'p1', method: 'cash', amount: 500, status: 'recorded', link: null, receiptNo: 'R-7', recordedBy: 'agent@e2e.test', paidAt: NOW, createdAt: NOW }] }));
+      appts = appts.map(a => ({ ...a, status: 'confirmed', payments: [{ id: 'p1', method: sent.desk.at(-1).method, amount: 500, status: 'recorded', link: null, receiptNo: sent.desk.at(-1).receiptNo, recordedBy: 'agent@e2e.test', paidAt: NOW, createdAt: NOW }] }));
       return route.fulfill({ json: { success: true, appointment: appts[0] } });
     }
     if (path === '/api/clinic/appointments') return route.fulfill({ json: { success: true, appointments: appts } });
@@ -2929,20 +2929,31 @@ test('Clinic: an agent books a patient with a doctor and records a cash payment 
   await dialog.getByLabel('Gender *').selectOption('female');
   await dialog.getByLabel('Allergies').fill('Penicillin');
   await dialog.getByLabel('Reason for the visit *').fill('Fever for 3 days');
+  // Payment type: online is off (no Razorpay here); PhonePe / UPI, to be marked paid when received.
+  const payTypes = dialog.getByRole('radiogroup', { name: 'How the patient pays' });
+  await expect(payTypes.getByRole('radio', { name: 'Online payment (Razorpay)' })).toBeDisabled();
+  await expect(page.getByTestId('book-missing')).toHaveText('Still needed: how the patient pays');
+  await expect(dialog.getByRole('button', { name: 'Book', exact: true })).toBeDisabled();
+  await payTypes.getByRole('radio', { name: 'PhonePe / UPI' }).click();
+  await dialog.getByRole('checkbox', { name: 'Already paid now' }).check();
+  await page.screenshot({ path: 'test-results/clinic-book-payment.png' });
+  await dialog.getByRole('checkbox', { name: 'Already paid now' }).uncheck();
   await dialog.getByRole('button', { name: 'Book', exact: true }).click();
-  await expect.poll(() => sent.book.at(-1)).toMatchObject({ phone: '919000000001', doctorId: CLINIC_DOCTOR.id, startsAt: slotAt, reason: 'Fever for 3 days',
+  await expect.poll(() => sent.book.at(-1)).toMatchObject({ phone: '919000000001', doctorId: CLINIC_DOCTOR.id, startsAt: slotAt, reason: 'Fever for 3 days', payMethod: 'upi_desk',
     patient: { name: 'Asha Devi', age: 34, gender: 'female', allergies: 'Penicillin' } });
   expect(sent.book[0].fee).toBeUndefined();
   const item = screen.getByTestId('appointment');
   await expect(item).toContainText('Waiting for payment');
-  await item.getByRole('button', { name: 'Paid at the desk' }).click();
-  const pay = page.getByRole('dialog', { name: /Paid at the desk/ });
-  await expect(pay.getByRole('textbox').first()).toBeDisabled();
-  await pay.getByRole('textbox').nth(1).fill('R-7');
-  await pay.getByRole('button', { name: 'Record payment' }).click();
-  await expect.poll(() => sent.desk.at(-1)).toMatchObject({ method: 'cash', amount: '500', receiptNo: 'R-7' });
+  await expect(item).toContainText('Will pay by PhonePe / UPI');
+  await item.getByRole('button', { name: 'Mark as paid' }).click();
+  const pay = page.getByRole('dialog', { name: /Mark as paid/ });
+  await expect(pay.getByRole('radio', { name: 'PhonePe / UPI' })).toHaveAttribute('aria-checked', 'true');
+  await expect(pay.getByRole('button', { name: 'Mark as paid' })).toBeDisabled();
+  await pay.getByLabel('Payment reference').fill('T2611141234567');
+  await pay.getByRole('button', { name: 'Mark as paid' }).click();
+  await expect.poll(() => sent.desk.at(-1)).toMatchObject({ method: 'upi_desk', amount: '500', receiptNo: 'T2611141234567' });
   await expect(item).toContainText('Confirmed');
-  await expect(item).toContainText('Paid ₹500 · Cash · receipt R-7');
+  await expect(item).toContainText('Paid ₹500 · PhonePe / UPI · ref T2611141234567');
   await expect(item).toContainText('Fever for 3 days');
   await expect(page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Appointments', exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/clinic-appointments.png', fullPage: true });
@@ -3091,4 +3102,63 @@ test('Ads Manage: campaigns with CRM numbers, drill down to ad sets and ads, tur
   await m.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('button', { name: 'All campaigns' }).click();
   await expect(m.getByRole('table', { name: 'Campaigns' })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test('Clinic Collections (managers): today\'s money by payment type and person, by doctor, payments with references', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'manager' });
+  const asked = [];
+  await page.route('**/api/clinic/**', route => {
+    const u = new URL(route.request().url());
+    if (u.pathname === '/api/clinic/status') return route.fulfill({ json: { success: true, enabled: true, razorpay: true } });
+    if (u.pathname === '/api/clinic/doctors') return route.fulfill({ json: { success: true, doctors: [CLINIC_DOCTOR] } });
+    if (u.pathname === '/api/clinic/appointments') return route.fulfill({ json: { success: true, appointments: [] } });
+    if (u.pathname === '/api/clinic/report') {
+      asked.push(Object.fromEntries(u.searchParams));
+      const day = u.searchParams.get('from');
+      return route.fulfill({ json: { success: true, from: day, to: u.searchParams.get('to'), days: day === u.searchParams.get('to') ? 1 : 7,
+        totals: { collected: 1200, payments: 3, discount: 100, waiting: 300, appointments: 3, waitingPayment: 1, confirmed: 0, seen: 1, noShow: 1, cancelled: 1, showRate: 50 },
+        byMethod: [{ method: 'cash', count: 1, amount: 500 }, { method: 'upi_desk', count: 1, amount: 400 }, { method: 'razorpay_link', count: 1, amount: 300 }],
+        byPerson: [{ person: 'agent@e2e.test', count: 1, amount: 500, cash: 500 }, { person: 'Online (Razorpay)', count: 1, amount: 300, cash: 0 }],
+        byDoctor: [{ doctorId: CLINIC_DOCTOR.id, doctor: 'Dr Rao', booked: 3, seen: 1, noShow: 1, cancelled: 1, collected: 1200 }],
+        daily: [{ day, appointments: 3, collected: 1200 }],
+        payments: [{ id: 'p2', paidAt: NOW, method: 'upi_desk', amount: 400, reference: 'T2611141234567', takenBy: 'manager@e2e.test', patientName: 'Ravi', doctor: 'Dr Rao', fee: 500 }] } });
+    }
+    return route.fulfill({ status: 404, json: { error: 'no mock' } });
+  });
+  await page.goto('/manager/appointments');
+  await page.getByTestId('appointments').getByRole('tab', { name: 'Collections' }).click();
+  const c = page.getByTestId('clinic-collections');
+  await expect(c).toContainText('₹1,200', { timeout: 20000 });
+  await expect(c).toContainText('₹100 discount');
+  await expect(c.getByRole('table', { name: 'By payment type' })).toContainText('PhonePe / UPI');
+  await expect(c.getByRole('table', { name: 'Taken by' })).toContainText('agent@e2e.test');
+  await expect(c.getByRole('table', { name: 'By doctor' })).toContainText('Dr Rao');
+  await expect(c.getByRole('table', { name: 'Payments' })).toContainText('T2611141234567');
+  expect(asked[0].from).toBe(asked[0].to);
+  await page.screenshot({ path: 'test-results/clinic-collections.png', fullPage: true });
+  await c.getByRole('radio', { name: 'Last 7 days' }).click();
+  await expect.poll(() => asked.at(-1)?.from !== asked.at(-1)?.to).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('sign-in after someone else signed out: the page left on /agent/inbox takes the Business Admin to /admin/inbox, not "Not allowed"', async ({ page }) => {
+  // An agent signed out: the sign-in page stays on the agent's address.
+  await page.goto('/agent/inbox');
+  await expect(page.getByText('Staff sign-in')).toBeVisible({ timeout: 20000 });
+  // The Business Admin signs in on that page (fake test login; nothing leaves this machine).
+  await fakeBackend(page, { role: 'owner' });
+  await page.route('**/auth/v1/token*', r => r.fulfill({ json: {
+    access_token: 'e2e-fake-token', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: 'e2e-refresh',
+    user: { id: ME.id, email: ME.email, aud: 'authenticated', role: 'authenticated', app_metadata: {}, user_metadata: {} },
+  } }));
+  await page.getByLabel('Email').fill(ME.email);
+  await page.getByLabel('Password').fill('e2e-test-only-1');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\/admin\/inbox$/, { timeout: 20000 });
+  await expect(page.getByRole('navigation', { name: 'Main menu' })).toBeVisible();
+  await expect(page.getByTestId('area-not-allowed')).toHaveCount(0);
+  // Typing another role's address afterwards is still "Not allowed" (only the moment of signing in moves you).
+  await page.goto('/agent/inbox');
+  await expect(page.getByTestId('area-not-allowed')).toBeVisible({ timeout: 20000 });
 });

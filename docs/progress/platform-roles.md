@@ -52,6 +52,12 @@ business's chats, contacts, notes or bot/AI content.
   existing admin is owner): business-side query timeline shows "Platform support" instead of the individual
   platform person's email (`src/QueryDetail.tsx`); branding + maintenance audits go through `platform.audit`
   (with the role); `server/types.cjs` platformAdmin type; "Not allowed" page says "platform staff".
+- 2026-11-14 (local, not deployed; no SQL): **Business details** card in Businesses → a business: name + business
+  type (Healthcare / Food / Retail / Services / Other) for the Platform Owner **and the Application Manager**
+  (`PATCH /api/platform/businesses/:id/details`, `platform.updateDetails`, audited `business.details_changed`
+  from → to). Changing the type asks first and says what changes (Healthcare = Clinic tools + Meta's healthcare ad
+  rules; leaving Healthcare hides the Clinic tools and blocks doctors' sign-in, data kept). Plan, status, paid-until
+  and limits stay Platform Owner only. Test `tests/platformBusinessDetails.test.cjs`.
 
 ## Next
 - [ ] User: run `20261133_platform_roles.sql` in the Supabase SQL editor (before or with the deploy).

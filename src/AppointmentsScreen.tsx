@@ -5,6 +5,7 @@ import { useApi, refreshApi, errorOf } from './queryClient';
 import { useConfirm } from './confirm';
 import { BUTTON, EmptyState, Modal, PageHeader, SkeletonRows } from './ui';
 import BookAppointmentModal from './BookAppointmentModal';
+import ClinicCollections from './ClinicCollections';
 import { addDays, APPT_STATUS, dayLabel, PAY_METHOD, rupees, timeOf, todayIst, type Appointment, type Doctor, type FollowUp } from './clinicUtils';
 import type { ShowToast } from './types';
 
@@ -14,7 +15,7 @@ import type { ShowToast } from './types';
  */
 export default function AppointmentsScreen({ isManager, showToast, onOpenChat }: { isManager: boolean; showToast: ShowToast; onOpenChat: (phone: string) => void }) {
   const [day, setDay] = useState(todayIst());
-  const [tab, setTab] = useState<'day' | 'followups'>('day');
+  const [tab, setTab] = useState<'day' | 'followups' | 'collections'>('day');
   const [doctorId, setDoctorId] = useState('');
   const [booking, setBooking] = useState(false);
   const [paying, setPaying] = useState<Appointment | null>(null);
@@ -63,12 +64,12 @@ export default function AppointmentsScreen({ isManager, showToast, onOpenChat }:
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">Online payment links need Razorpay: {isManager ? 'the Business Admin connects it in Settings → Clinic.' : 'ask the Business Admin.'} Desk payments work now.</div>
         )}
         <div className="flex gap-1.5" role="tablist" aria-label="Appointments view">
-          {([['day', 'By day'], ['followups', 'Follow-ups']] as const).map(([k, l]) => (
+          {([['day', 'By day'], ['followups', 'Follow-ups'], ...(isManager ? [['collections', 'Collections']] as const : [])] as const).map(([k, l]) => (
             <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
               className={`px-3 py-1.5 rounded-lg text-sm font-semibold cursor-pointer ${tab === k ? 'bg-wa-teal text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>{l}</button>
           ))}
         </div>
-        {tab === 'followups' ? <FollowUps isManager={isManager} showToast={showToast} onOpenChat={onOpenChat} /> : (<>
+        {tab === 'collections' && isManager ? <ClinicCollections /> : tab === 'followups' ? <FollowUps isManager={isManager} showToast={showToast} onOpenChat={onOpenChat} /> : (<>
         <div className="flex items-center gap-2 flex-wrap">
           <button className={BUTTON.secondary} onClick={() => setDay(addDays(day, -1))} aria-label="Previous day"><ChevronLeft className="w-4 h-4" /></button>
           <input type="date" value={day} onChange={e => e.target.value && setDay(e.target.value)} className={inputInlineCls} aria-label="Day" />
@@ -98,7 +99,8 @@ export default function AppointmentsScreen({ isManager, showToast, onOpenChat }:
                         </div>
                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${st.cls}`}>{st.label}</span>
                       </div>
-                      {paid && <div className="text-xs text-emerald-800">Paid {rupees(paid.amount)} · {PAY_METHOD[paid.method] || paid.method}{paid.receiptNo ? ` · receipt ${paid.receiptNo}` : ''}{paid.recordedBy && paid.method !== 'razorpay_link' ? ` · taken by ${paid.recordedBy}` : ''}</div>}
+                      {paid && <div className="text-xs text-emerald-800">Paid {rupees(paid.amount)} · {PAY_METHOD[paid.method] || paid.method}{paid.receiptNo ? ` · ${paid.method === 'cash' ? 'receipt' : 'ref'} ${paid.receiptNo}` : ''}{paid.recordedBy && paid.method !== 'razorpay_link' ? ` · taken by ${paid.recordedBy}` : ''}</div>}
+                      {a.status === 'pending_payment' && a.paymentMethod && <div className="text-xs text-amber-800">Will pay by {PAY_METHOD[a.paymentMethod] || a.paymentMethod}{a.paymentMethod === 'razorpay_link' ? ' (confirms by itself when paid)' : ' · mark as paid when received'}</div>}
                       {a.status === 'cancelled' && a.cancelledReason && <div className="text-xs text-slate-500">Reason: {a.cancelledReason}</div>}
                       <div className="flex flex-wrap gap-1.5">
                         <button className={BUTTON.quiet} onClick={() => onOpenChat(a.phone)}><MessageSquare className="w-3.5 h-3.5" /> Chat</button>
@@ -107,7 +109,7 @@ export default function AppointmentsScreen({ isManager, showToast, onOpenChat }:
                             {status.data?.razorpay && <button className={BUTTON.secondary} disabled={dis} onClick={() => sendLink(a)}><Send className="w-3.5 h-3.5" /> {open ? 'Send link again' : 'Send payment link'}</button>}
                             {status.data?.razorpay && <button className={BUTTON.quiet} disabled={dis} onClick={() => copyLink(a)}><Copy className="w-3.5 h-3.5" /> Copy link</button>}
                             {open && <button className={BUTTON.quiet} disabled={dis} onClick={() => check(a)}><RefreshCw className="w-3.5 h-3.5" /> Check payment</button>}
-                            <button className={BUTTON.secondary} disabled={dis} onClick={() => setPaying(a)}><Banknote className="w-3.5 h-3.5" /> Paid at the desk</button>
+                            <button className={BUTTON.secondary} disabled={dis} onClick={() => setPaying(a)}><Banknote className="w-3.5 h-3.5" /> Mark as paid</button>
                           </>
                         )}
                         {a.status === 'confirmed' && (
@@ -128,7 +130,7 @@ export default function AppointmentsScreen({ isManager, showToast, onOpenChat }:
             )}
         </>)}
       </div>
-      {booking &&<BookAppointmentModal onClose={() => setBooking(false)} onBooked={(a) => { setBooking(false); setDay(new Date(Date.parse(a.startsAt) + 330 * 60000).toISOString().slice(0, 10)); showToast('Appointment booked'); }} />}
+      {booking &&<BookAppointmentModal onClose={() => setBooking(false)} onBooked={(a, warning) => { setBooking(false); setDay(new Date(Date.parse(a.startsAt) + 330 * 60000).toISOString().slice(0, 10)); showToast(warning || 'Appointment booked'); }} />}
       {paying && <DeskPaymentModal appt={paying} isManager={isManager} onClose={() => setPaying(null)} onDone={() => { setPaying(null); refreshApi('/api/clinic/appointments'); showToast('Payment recorded: appointment confirmed'); }} />}
     </div>
   );
@@ -178,14 +180,17 @@ function FollowUps({ isManager, showToast, onOpenChat }: { isManager: boolean; s
             </ul>
           )}
       {booking && <BookAppointmentModal phone={booking.phone} patientId={booking.patientId || undefined} doctorId={booking.doctorId}
-        onClose={() => setBooking(null)} onBooked={() => { setBooking(null); refreshApi('/api/clinic/follow-ups'); showToast('Follow-up visit booked'); }} />}
+        onClose={() => setBooking(null)} onBooked={(_a, warning) => { setBooking(null); refreshApi('/api/clinic/follow-ups'); showToast(warning || 'Follow-up visit booked'); }} />}
     </div>
   );
 }
 
-/** Record a payment taken at the desk. Less than the fee is a discount: managers only (the server checks too). */
+/**
+ * Mark a payment as received (cash / PhonePe-UPI / card / other). Every way except cash needs its reference /
+ * transaction ID. Less than the fee is a discount: managers only (the server checks all of this too).
+ */
 function DeskPaymentModal({ appt, isManager, onClose, onDone }: { appt: Appointment; isManager: boolean; onClose: () => void; onDone: () => void }) {
-  const [method, setMethod] = useState('cash');
+  const [method, setMethod] = useState(appt.paymentMethod && appt.paymentMethod !== 'razorpay_link' ? appt.paymentMethod : 'cash');
   const [amount, setAmount] = useState(String(appt.fee));
   const [receiptNo, setReceiptNo] = useState('');
   const [note, setNote] = useState('');
@@ -196,8 +201,8 @@ function DeskPaymentModal({ appt, isManager, onClose, onDone }: { appt: Appointm
     try { await api(`/api/clinic/appointments/${appt.id}/desk-payment`, { method: 'POST', body: { method, amount, receiptNo, note } }); onDone(); } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
   return (
-    <Modal title={`Paid at the desk: ${appt.patientName}`} onClose={onClose}
-      footer={<><button className={BUTTON.secondary} onClick={onClose}>Close</button><button className={BUTTON.primary} onClick={save} disabled={busy}><Banknote className="w-3.5 h-3.5" /> {busy ? 'Saving…' : 'Record payment'}</button></>}>
+    <Modal title={`Mark as paid: ${appt.patientName}`} onClose={onClose}
+      footer={<><button className={BUTTON.secondary} onClick={onClose}>Close</button><button className={BUTTON.primary} onClick={save} disabled={busy || (method !== 'cash' && receiptNo.trim().length < 4) || (method === 'other' && !note.trim())}><Banknote className="w-3.5 h-3.5" /> {busy ? 'Saving…' : 'Mark as paid'}</button></>}>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="How they paid">
           {['cash', 'upi_desk', 'card_desk', 'other'].map(m => (
@@ -211,12 +216,13 @@ function DeskPaymentModal({ appt, isManager, onClose, onDone }: { appt: Appointm
           {!isManager && <span className="text-xs text-slate-500">Only a manager can take less than the fee.</span>}
         </label>
         <label className="block">
-          <span className="text-xs font-semibold text-slate-600">Receipt number (optional)</span>
-          <input value={receiptNo} onChange={e => setReceiptNo(e.target.value)} maxLength={40} className={inputCls} />
+          <span className="text-xs font-semibold text-slate-600">{method === 'cash' ? 'Receipt number (optional)' : 'Payment reference / transaction ID *'}</span>
+          <input value={receiptNo} onChange={e => setReceiptNo(e.target.value)} maxLength={40} className={inputCls} aria-label="Payment reference"
+            placeholder={method === 'upi_desk' ? 'UPI transaction ID from PhonePe' : method === 'card_desk' ? 'Card machine slip number' : method === 'other' ? 'e.g. Bank transfer UTR' : ''} />
         </label>
         <label className="block">
-          <span className="text-xs font-semibold text-slate-600">Note{method === 'other' ? '' : ' (optional)'}</span>
-          <input value={note} onChange={e => setNote(e.target.value)} maxLength={200} placeholder={method === 'other' ? 'How was it paid?' : ''} className={inputCls} />
+          <span className="text-xs font-semibold text-slate-600">{method === 'other' ? 'How it was paid *' : 'Note (optional)'}</span>
+          <input value={note} onChange={e => setNote(e.target.value)} maxLength={200} placeholder={method === 'other' ? 'e.g. Google Pay, bank transfer' : ''} className={inputCls} />
         </label>
         {error && <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700" role="alert">{error}</div>}
       </div>

@@ -204,7 +204,7 @@ function Console({ base, email, role, onSignOut }: { base: string; email: string
       </div>
 
       {openBusiness && (
-        <BusinessDrawer id={openBusiness} plans={data?.plans || []} onClose={() => setOpenBusiness(null)} onChanged={refresh} showToast={showToast} canEdit={isOwner} canResendInvite={can('onboarding')} />
+        <BusinessDrawer id={openBusiness} plans={data?.plans || []} onClose={() => setOpenBusiness(null)} onChanged={refresh} showToast={showToast} canEdit={isOwner} canResendInvite={can('onboarding')} canEditDetails={role === 'owner' || role === 'manager'} />
       )}
 
       {toast && <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-xs px-4 py-2 rounded-lg shadow-lg">{toast}</div>}

@@ -48,6 +48,8 @@ router.get('/overview', async (req, res) => {
 });
 router.post('/businesses', support, async (req, res) => reply(res, await platform.createBusiness(req.platformAdmin, req.body || {})));
 router.patch('/businesses/:id', ownerOnly, id, async (req, res) => reply(res, await platform.updateBusiness(req.platformAdmin, req.params.id, req.body || {})));
+// Name and business type: Platform Owner + Application Manager (onboarding). Plan, status, limits stay owner-only.
+router.patch('/businesses/:id/details', support, id, async (req, res) => reply(res, await platform.updateDetails(req.platformAdmin, req.params.id, req.body || {})));
 router.put('/plans/:id', ownerOnly, validate({ params: P.planId }), async (req, res) => reply(res, await platform.updatePlan(req.platformAdmin, req.params.id, req.body || {})));
 
 // Onboarding: new businesses with their setup checklist (yes/no per step), and resending the owner's invite.

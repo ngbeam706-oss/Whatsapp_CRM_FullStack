@@ -3,6 +3,7 @@ import { Lock, LogOut } from 'lucide-react';
 import { BrandLogo, useBrandName } from './BrandMark';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
+import { markJustSignedIn } from './signInFlag';
 import type { Role } from './types';
 
 /** This login's staff_members row (RLS lets a login read only its own). */
@@ -128,6 +129,7 @@ function LoginScreen() {
     setError('');
     const { error: signInError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     if (signInError) setError(signInError.message === 'Invalid login credentials' ? 'Wrong email or password.' : signInError.message);
+    else markJustSignedIn();
     setBusy(false);
   };
 

@@ -75,7 +75,7 @@ async function unsuppress(biz, phone) {
 // ---------------------------------------------------------------------------
 /**
  * @typedef {{ range: string, from: string, to: string, status: string, statusType: string, source: string, adId: string,
- *   tag: string, assignee: string, unread: boolean, number: string, closed: 'open' | 'closed' | 'any', optedOut: boolean, q: string }} Filters
+ *   tag: string, assignee: string, unread: boolean, number: string, closed: 'open' | 'closed' | 'any', optedOut: boolean, returning: boolean, q: string }} Filters
  */
 /** Clean what the browser sent (unknown values are dropped). @param {any} input @returns {Filters} */
 function cleanFilters(input = {}) {
@@ -96,6 +96,7 @@ function cleanFilters(input = {}) {
     number: /^\d{5,30}$/.test(s(f.number, 30)) ? s(f.number, 30) : '',
     closed: f.closed === 'closed' || f.closed === 'open' ? f.closed : 'any',
     optedOut: f.optedOut === true || f.optedOut === 'true',
+    returning: f.returning === true || f.returning === 'true',
     q: s(f.q, 40),
   };
 }
@@ -148,6 +149,12 @@ async function filterParts(biz, f, { staffEmail = '', isManager = false } = {}) 
   else if (isManager && EMAIL_RE.test(f.assignee)) parts.push(`assigned_to=eq.${encodeURIComponent(f.assignee)}`);
   if (f.unread) parts.push('unread_count=gt.0');
   if (f.optedOut) parts.push('opted_out=is.true');
+  // Returning customers (SQL 20261138): came back after a long silence; with a date range, came back in it.
+  if (f.returning) {
+    parts.push('returned_at=not.is.null');
+    if (since) parts.push(`returned_at=gte.${encodeURIComponent(since)}`);
+    if (until) parts.push(`returned_at=lt.${encodeURIComponent(until)}`);
+  }
   if (f.number) {
     // Contacts from before several numbers (no number recorded) belong to the main number.
     const main = await require('./whatsapp.cjs').getWhatsApp(biz);
@@ -158,7 +165,8 @@ async function filterParts(biz, f, { staffEmail = '', isManager = false } = {}) 
   if (search) {
     const term = encodeURIComponent(`*${search}*`);
     const phoneTerm = encodeURIComponent(`*${digits(search) || search}*`);
-    ors.push(`or(name.ilike.${term},phone.ilike.${phoneTerm})`);
+    const both = require('./inbox.cjs').waNameSearchable();
+    ors.push(`or(name.ilike.${term},${both ? `wa_name.ilike.${term},` : ''}phone.ilike.${phoneTerm})`);
   }
   return { parts, ors };
 }
@@ -202,6 +210,8 @@ async function filterOptions(staff) {
 // Leads page (managers + Business Admin)
 // ---------------------------------------------------------------------------
 const LIST_FIELDS = 'phone,name,stage,source,tags,assigned_to,created_at,last_contacted_at,opted_out,first_ad_id,first_ad_headline,last_ad_id,last_ad_headline,unread_count';
+/** The WhatsApp name and "returning" (SQL 20261138), read when the columns exist. */
+const LIST_EXTRA = ',wa_name,name_set_by,returned_at,returned_after_days';
 /** @param {Staff} staff */
 const denied = (staff) => (isManagerOrOwner(staff?.role) ? null : { error: 'Only managers and the Business Admin can use the Leads page.', status: 403 });
 
@@ -214,7 +224,9 @@ async function matching(staff, f, fields, max) {
   for (let offset = 0; offset < max; offset += PAGE) {
     const path = (/** @type {string[]} */ closed) => `whatsapp_leads?${[`business_id=eq.${biz}`, ...parts, ...orParams(ors), ...closed, `select=${fields}`, 'order=last_contacted_at.desc.nullslast,phone.asc', `limit=${Math.min(PAGE, max - offset)}`, `offset=${offset}`].join('&')}`;
     const closed = closedPart(f);
-    let r = await dbRequest(path(closed));
+    // The WhatsApp name / returning columns when they exist (else the older columns).
+    let r = fields === LIST_FIELDS ? await dbRequest(path(closed).replace(`select=${fields}`, `select=${fields}${LIST_EXTRA}`)) : { ok: false, status: 0, data: null };
+    if (!r.ok) r = await dbRequest(path(closed));
     // Before the inbox SQL (20261132) there is no closed_at column: no Done filter then.
     if (!r.ok && closed.length) r = await dbRequest(path([]));
     if (!r.ok || !Array.isArray(r.data)) return { error: 'Could not load the leads.' };
@@ -230,8 +242,10 @@ async function selected(biz, phones, fields) {
   /** @type {Row[]} */
   const rows = [];
   for (let i = 0; i < list.length; i += CHUNK) {
-    const r = await dbRequest(`whatsapp_leads?business_id=eq.${biz}&phone=in.(${list.slice(i, i + CHUNK).join(',')})&select=${fields}`);
-    if (!r.ok) return { error: 'Could not load the leads.' };
+    const q = (/** @type {string} */ cols) => dbRequest(`whatsapp_leads?business_id=eq.${biz}&phone=in.(${list.slice(i, i + CHUNK).join(',')})&select=${cols}`);
+    let r = fields === LIST_FIELDS ? await q(`${fields}${LIST_EXTRA}`) : { ok: false, status: 0, data: null };
+    if (!r.ok) r = await q(fields);
+    if (!r.ok || !Array.isArray(r.data)) return { error: 'Could not load the leads.' };
     rows.push(...r.data);
   }
   return { rows };
@@ -262,6 +276,8 @@ const toCsv = (header, rows) => `﻿${[header, ...rows].map(r => r.map(csvCell).
 /** @type {Record<string, { label: string, get: (l: Row, ctx: { statuses: any[], notes: Map<string, number> }) => unknown }>} */
 const COLUMNS = {
   name: { label: 'Name', get: l => l.name },
+  waName: { label: 'WhatsApp name', get: l => l.wa_name || '' },
+  returned: { label: 'Came back (date)', get: l => l.returned_at || '' },
   phone: { label: 'Phone', get: l => (l.phone ? `+${l.phone}` : '') },
   status: { label: 'Status', get: (l, c) => c.statuses.find(s => s.key === l.stage)?.label || l.stage },
   statusType: { label: 'Status type', get: (l, c) => require('./leadStatuses.cjs').typeOf(c.statuses, l.stage) },
@@ -274,7 +290,7 @@ const COLUMNS = {
   lastMessage: { label: 'Last message date', get: l => l.last_contacted_at },
   notes: { label: 'Notes', get: (l, c) => c.notes.get(l.phone) || 0 },
 };
-const DEFAULT_COLUMNS = ['name', 'phone', 'status', 'statusType', 'source', 'ad', 'tags', 'assigned', 'created', 'lastMessage', 'notes'];
+const DEFAULT_COLUMNS = ['name', 'waName', 'phone', 'status', 'statusType', 'source', 'ad', 'tags', 'assigned', 'created', 'lastMessage', 'notes'];
 
 /**
  * CSV of the selected leads (body.phones) or of everything matching body.filters (up to 50,000). Audited (who, how

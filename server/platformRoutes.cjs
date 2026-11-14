@@ -84,6 +84,8 @@ router.put('/branding', ownerOnly, async (req, res) => {
   res.json({ success: true, ...r });
 });
 router.post('/branding/logo', ownerOnly, async (req, res) => reply(res, await brandingStore.saveLogo(req.platformAdmin, (req.body || {}).dataUrl)));
+// The Application URL (server/siteUrl.cjs): webhook URLs, call links and email links are built from it.
+router.put('/branding/app-url', ownerOnly, async (req, res) => reply(res, await brandingStore.saveAppUrl(req.platformAdmin, (req.body || {}).appUrl)));
 router.delete('/branding/logo', ownerOnly, async (req, res) => reply(res, await brandingStore.removeLogo(req.platformAdmin)));
 
 // Maintenance mode for the whole platform (server/maintenance.cjs). Everyone sees the state; only the owner switches it.

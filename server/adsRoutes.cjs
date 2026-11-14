@@ -108,4 +108,20 @@ router.put('/ads/adsets/:adsetId/budget', requireManager, gate, validate({ param
 router.put('/ads/alerts', requireManager, gate, validate({ body: B.adAlerts }), async (req, res) =>
   reply(res, await ads.saveAlerts(req.staff, req.body || {})));
 
+// ---- Funnel (A1 + A2; server/adsFunnel.cjs): managers + Business Admin; aggregates only. POST: the filters (an
+// agent's email, a campaign) stay out of addresses. ----
+const funnel = require('./adsFunnel.cjs');
+router.post('/ads/funnel', requireManager, gate, validate({ body: B.adsFunnel }), async (req, res) => {
+  try { reply(res, await funnel.report(req.staff.businessId, req.body || {})); } catch (err) { reply(res, { error: err instanceof Error ? err.message : 'Could not build the funnel.' }); }
+});
+router.post('/ads/funnel/export', requireManager, gate, validate({ body: B.adsFunnel }), async (req, res) => {
+  const r = await funnel.report(req.staff.businessId, req.body || {});
+  if ('error' in r && r.error) return reply(res, r);
+  if (!('funnel' in r) || !r.funnel) return reply(res, { error: 'Connect an ad account first.' });
+  const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="ads-funnel-${day}.csv"`);
+  res.send(funnel.csvOf(r.funnel));
+});
+
 module.exports = router;

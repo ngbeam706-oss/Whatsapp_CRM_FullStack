@@ -184,8 +184,8 @@ async function whatsappForLegacyWebhook() {
 
 /** @param {string | null | undefined} s */
 const last4 = (s) => (s ? String(s).slice(-4) : null);
-/** @param {string | null | undefined} key */
-const webhookUrl = (key) => (key ? `${config.publicSiteUrl}/webhook/${key}` : `${config.publicSiteUrl}/webhook`);
+/** @param {string | null | undefined} key @param {string} [base] the app's address (server/siteUrl.cjs) */
+const webhookUrl = (key, base = config.publicSiteUrl) => (key ? `${base}/webhook/${key}` : `${base}/webhook`);
 
 /**
  * What the Business Admin may see. The access token and app secret are never returned.
@@ -205,6 +205,8 @@ async function connectionStatus(businessId, { prepare = false } = {}) {
     await ensureWebhookDetails(id);
     row = (await loadRow(id)).row;
   }
+  // The address webhook URLs start with: the Application URL (Platform -> Branding), else the default.
+  const base = await require('./siteUrl.cjs').siteUrl();
   return {
     connected: !!(saved || env),
     source: saved ? 'saved' : env ? 'env' : 'none',
@@ -216,7 +218,7 @@ async function connectionStatus(businessId, { prepare = false } = {}) {
     // Owners paste these two into Meta (App Dashboard -> WhatsApp -> Configuration).
     // Environment connection: the old /webhook address and token. Otherwise the business's own
     // address, which exists before the number is connected (see ensureWebhookDetails).
-    webhookUrl: env ? webhookUrl(null) : (row?.webhook_key ? webhookUrl(row.webhook_key) : ''),
+    webhookUrl: env ? webhookUrl(null, base) : (row?.webhook_key ? webhookUrl(row.webhook_key, base) : ''),
     verifyToken: env ? env.verifyToken || '' : (row?.verify_token_enc ? secrets.decrypt(row.verify_token_enc) || '' : ''),
     tokenUnreadable: !!(row?.access_token_enc && !secrets.decrypt(row.access_token_enc)),
     connectedAt: row?.connected_at || null,

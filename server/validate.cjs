@@ -161,6 +161,20 @@ const body = {
   // Lead statuses (server/leadStatuses.cjs checks the values)
   leadStatus: z.looseObject({ label: text(60).optional(), hint: z.union([text(200), z.null()]).optional(), color: text(20).optional(), type: text(20).optional(), active: z.boolean().optional() }),
   leadStatusOrder: z.looseObject({ keys: z.array(text(40)).max(50) }),
+  // Ads funnel (server/adsFunnel.cjs cleans the values)
+  adsFunnel: z.looseObject({
+    days: numberLike.optional(), from: text(10).optional(), to: text(10).optional(), attribution: text(10).optional(),
+    campaignId: text(30).optional(), statusType: text(20).optional(), agent: text(254).optional(), source: text(80).optional(),
+  }),
+  // Lead assignment (server/leadAssignment.cjs checks the values)
+  leadAssignment: z.looseObject({
+    mode: text(20).optional(), maxOpen: z.union([numberLike, z.null()]).optional(), perNumber: z.boolean().optional(),
+    teams: z.array(z.looseObject({ numberId: z.union([text(30), z.null()]).optional(), members: z.array(text(254)).max(200) })).max(20).optional(),
+  }),
+  availability: z.looseObject({
+    available: z.boolean().optional(), days: z.array(numberLike).max(7).optional(),
+    startHour: z.union([numberLike, z.null()]).optional(), endHour: z.union([numberLike, z.null()]).optional(),
+  }),
   // Leads page (server/leadsTools.cjs cleans the filters)
   leadsQuery: z.looseObject({
     filters: z.looseObject({}).optional(), phones: z.array(textOrNumber(30)).max(1000).optional(),

@@ -63,7 +63,7 @@ async function add(me, input = {}) {
   const staff = await dbRequest(`staff_members?select=user_id&email=ilike.${encodeURIComponent(email.replace(/[%_\\]/g, (c) => `\\${c}`))}`);
   if (staff.ok && staff.data?.length) return { error: BUSINESS_STAFF };
 
-  const res = await fetch(`${config.supabaseUrl}/auth/v1/invite?redirect_to=${encodeURIComponent(config.publicSiteUrl)}`, {
+  const res = await fetch(`${config.supabaseUrl}/auth/v1/invite?redirect_to=${encodeURIComponent(await require('./siteUrl.cjs').siteUrl())}`, {
     method: 'POST', headers: serviceHeaders(), body: JSON.stringify({ email }),
   });
   /** @type {any} */

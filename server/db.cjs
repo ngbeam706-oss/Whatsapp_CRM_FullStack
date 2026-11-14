@@ -149,6 +149,21 @@ async function logLead(businessId, phone, name, lastMessage, source = 'Direct Wh
   });
 
   try {
+    // A WhatsApp profile name (SQL 20261138): always kept as wa_name; it becomes the shown `name` only while the team
+    // hasn't saved a name of its own (name_set_by). Before that SQL the columns don't exist: the old upsert below runs.
+    if (name) {
+      const base = `whatsapp_leads?business_id=eq.${businessId}&phone=eq.${encodeURIComponent(phone)}`;
+      const common = { last_message: payload.last_message, last_contacted_at: payload.last_contacted_at, status: 'active', wa_name: name, ...(source ? { source } : {}), ...(referral ? { referral } : {}) };
+      const own = await dbRequest(`${base}&name_set_by=is.null`, { method: 'PATCH', prefer: 'return=representation', body: { ...common, name } });
+      if (own.ok) {
+        if (Array.isArray(own.data) && own.data.length) return;
+        const kept = await dbRequest(base, { method: 'PATCH', prefer: 'return=representation', body: common });
+        if (kept.ok && Array.isArray(kept.data) && kept.data.length) return;
+        // A new contact: its name and WhatsApp name are the profile name.
+        const ins = await upsert({ ...payload, wa_name: name });
+        if (ins.ok) return;
+      }
+    }
     // No name given (bot replies, calls): an existing contact keeps its name; only a new one gets "+<number>".
     if (!name) {
       const upd = await dbRequest(`whatsapp_leads?business_id=eq.${businessId}&phone=eq.${encodeURIComponent(phone)}`, {

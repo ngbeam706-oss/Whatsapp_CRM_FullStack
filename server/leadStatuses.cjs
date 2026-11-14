@@ -281,8 +281,11 @@ async function remove(staff, rawKey, moveTo) {
   if (chats > 0) {
     target = rest.find(s => s.key === String(moveTo || ''));
     if (!target) return { error: `${chats} chat${chats === 1 ? ' is' : 's are'} still in "${current.label}". Choose a status to move ${chats === 1 ? 'it' : 'them'} to first.`, status: 409, chats };
-    const mv = await dbRequest(`whatsapp_leads?business_id=eq.${biz}&stage=eq.${encodeURIComponent(key)}`, { method: 'PATCH', prefer: 'return=minimal', body: { stage: target.key, stage_changed_at: new Date().toISOString() } });
+    const mv = await dbRequest(`whatsapp_leads?business_id=eq.${biz}&stage=eq.${encodeURIComponent(key)}`, { method: 'PATCH', prefer: 'return=representation', body: { stage: target.key, stage_changed_at: new Date().toISOString() } });
     if (!mv.ok) return { error: 'Could not move the chats. Nothing was removed.' };
+    // Status history (Ads funnel): each moved chat, from this status to the target.
+    const moved = (Array.isArray(mv.data) ? mv.data : []).map((/** @type {any} */ l) => ({ phone: String(l.phone), from: key, to: target?.key || '' }));
+    await require('./statusHistory.cjs').record(biz, moved, { by: staff.email, source: 'bulk' });
   }
   const r = await dbRequest(`lead_statuses?business_id=eq.${biz}&key=eq.${encodeURIComponent(key)}`, { method: 'DELETE', prefer: 'return=minimal' });
   if (!r.ok) return { error: 'Could not remove the status.' };

@@ -2,13 +2,14 @@ import { useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { BarChart3, RotateCw, Table2, Download, Lightbulb } from 'lucide-react';
 import { useApi, errorOf } from './queryClient';
 import { STAGE_INFO } from './crmUtils';
+import { AdsFunnelSummary } from './AdsFunnel';
 import type { BusinessNumber, Stage } from './types';
 import { useBusinessNumbers, numberName } from './inboxNumbers';
 
 // ---- What /api/analytics returns (server/analytics.cjs report) ----
 type Num = number | null | undefined;
 interface Kpis {
-  newLeads: number; activeChats: number; customerMessages: number; staffReplies: number; automatedReplies: number;
+  newLeads: number; returningLeads?: number; activeChats: number; customerMessages: number; staffReplies: number; automatedReplies: number;
   orderEnquiries: number; newLeadConversion: number | null; medianStaffResponseMin: number | null;
   unassignedNow: number; unreadNow: number;
 }
@@ -112,6 +113,7 @@ export default function AnalyticsScreen() {
         {data && (
           <>
             <KpiGrid k={data.kpis} days={data.range.days} />
+            <AdsFunnelSummary days={data.range.days} />
             <div className="grid lg:grid-cols-[2fr_1fr] gap-4">
               <Card title="New leads per day" subtitle="By where they came from" means="Which sources bring new customers. A source that grows after a campaign or ad is working; a sudden drop is worth checking.">
                 <LeadsChart d={data.leadsByDay} />
@@ -206,7 +208,7 @@ function downloadCsv(d: AnalyticsReport) {
 
 function KpiGrid({ k, days }: { k: Kpis; days: number }) {
   const tiles = [
-    ['New leads', fmtNum(k.newLeads), `in ${days} days`],
+    ['New leads', fmtNum(k.newLeads), k.returningLeads ? `in ${days} days · ${fmtNum(k.returningLeads)} returning after a long silence` : `in ${days} days`],
     ['Active chats', fmtNum(k.activeChats), 'customers who wrote in'],
     ['Customer messages', fmtNum(k.customerMessages), `${fmtNum(k.automatedReplies)} automated · ${fmtNum(k.staffReplies)} staff replies`],
     ['Order enquiries', fmtNum(k.orderEnquiries), 'from the bot menu'],

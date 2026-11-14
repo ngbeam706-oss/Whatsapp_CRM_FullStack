@@ -73,7 +73,7 @@ async function inviteStaff(me, rawEmail, role = 'agent') {
     if (room.error) return { error: room.error, limitReached: true };
   }
 
-  const res = await fetch(`${config.supabaseUrl}/auth/v1/invite?redirect_to=${encodeURIComponent(config.publicSiteUrl)}`, {
+  const res = await fetch(`${config.supabaseUrl}/auth/v1/invite?redirect_to=${encodeURIComponent(await require('./siteUrl.cjs').siteUrl())}`, {
     method: 'POST',
     headers: serviceHeaders(),
     body: JSON.stringify({ email }),
@@ -273,7 +273,7 @@ async function forgotPassword(rawEmail) {
   if (!row.ok) return answer; // can't tell who this is: send nothing rather than risk an agent reset
   if ((row.data || []).some((/** @type {any} */ r) => r.role === 'agent')) return answer;
   try {
-    await fetch(`${config.supabaseUrl}/auth/v1/recover?redirect_to=${encodeURIComponent(config.publicSiteUrl)}`, {
+    await fetch(`${config.supabaseUrl}/auth/v1/recover?redirect_to=${encodeURIComponent(await require('./siteUrl.cjs').siteUrl())}`, {
       method: 'POST', headers: serviceHeaders(), body: JSON.stringify({ email }),
     });
   } catch { /* same answer */ }

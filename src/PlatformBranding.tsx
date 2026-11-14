@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import { useConfirm } from './confirm';
-import { Palette, Save, Upload, Trash2, ExternalLink, AlertTriangle, CheckCircle2, Building2, Mail, Scale, ImageIcon } from 'lucide-react';
+import { Palette, Save, Upload, Trash2, ExternalLink, AlertTriangle, CheckCircle2, Building2, Mail, Scale, ImageIcon, Globe } from 'lucide-react';
 import { api, ApiError, errorMessage, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
 import { reloadBranding, REQUIRED_FOR_LEGAL, type BrandField } from './branding';
 import { SITE } from './site/siteConfig';
@@ -10,7 +10,11 @@ import type { ShowToast } from './types';
 // (server/branding.cjs). Shown on the public website, the Privacy Policy and Terms, the sign-in page and the
 // dashboard header. Not any business's details: each business sets its own in Settings -> Setup.
 
-interface AdminBranding { branding: Partial<Record<BrandField, string>>; logoUrl: string | null; updatedBy: string | null; updatedAt: string | null }
+interface AdminBranding {
+  branding: Partial<Record<BrandField, string>>; logoUrl: string | null; updatedBy: string | null; updatedAt: string | null;
+  /** The Application URL ('' = not set), the address in use, and the default (server/siteUrl.cjs). */
+  appUrl?: string; appUrlInUse?: string; appUrlDefault?: string;
+}
 
 const GROUPS: Array<{ title: string; icon: typeof Palette; text: string; fields: Array<{ key: BrandField; label: string; placeholder: string; hint?: string; multiline?: boolean; type?: string }> }> = [
   {
@@ -165,6 +169,8 @@ export default function PlatformBranding({ showToast }: { showToast: ShowToast }
         </div>
       </Card>
 
+      <AppUrlCard saved={saved} onSaved={d => { setSaved(d); showToast('Application URL saved. Every business now sees its new webhook URL on Settings → WhatsApp.'); }} showToast={showToast} />
+
       <form onSubmit={save} noValidate className="space-y-4" aria-label="Branding details">
         {GROUPS.map(g => (
           <Card key={g.title} icon={g.icon} title={g.title} text={g.text}>
@@ -201,6 +207,54 @@ export default function PlatformBranding({ showToast }: { showToast: ShowToast }
 }
 
 const required = () => <><span className="text-red-600">*</span></>;
+
+/**
+ * The Application URL (server/siteUrl.cjs): every business's WhatsApp webhook URL, customers' call links and the
+ * invite / password email links start with it. Saved on its own, after an "Are you sure?" (each business must then
+ * update Meta); the server only saves it when the app answers there.
+ */
+function AppUrlCard({ saved, onSaved, showToast }: { saved: AdminBranding; onSaved: (d: AdminBranding) => void; showToast: ShowToast }) {
+  const confirm = useConfirm();
+  const [value, setValue] = useState(saved.appUrl || '');
+  const [busy, setBusy] = useState(false);
+  const inUse = saved.appUrlInUse || saved.appUrlDefault || '';
+  const next = value.trim().replace(/\/+$/, '');
+  const changed = next !== (saved.appUrl || '');
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const target = next || saved.appUrlDefault || '';
+    const ok = await confirm({
+      title: 'Change the Application URL?',
+      body: `Every business's WhatsApp webhook URL will start with ${target}. Each Business Admin must paste the new URL into their Meta app (WhatsApp → Configuration), and the address must be added in Supabase (Authentication → URL Configuration) for sign-in emails. Messages keep arriving at the old address until they do.`,
+      confirmLabel: 'Change it', danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      onSaved(await api<AdminBranding>('/api/platform/branding/app-url', { method: 'PUT', body: { appUrl: next } }));
+    } catch (err) {
+      showToast(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card icon={Globe} title="Application URL" text="The web address of this app. Each business's WhatsApp webhook URL, customers' call links and the links in invite / password emails are built from it.">
+      <form onSubmit={submit} className="space-y-2" aria-label="Application URL" data-testid="branding-app-url">
+        <p className="text-xs text-slate-600">In use now: <strong className="font-mono">{inUse}</strong>{!saved.appUrl && ' (the default)'}</p>
+        <div className="flex flex-wrap gap-2">
+          <input value={value} onChange={e => setValue(e.target.value)} placeholder={saved.appUrlDefault || 'https://crm.example.com'} className={`${inputCls} flex-1 min-w-[240px] font-mono`} aria-label="Application URL" />
+          <button type="submit" disabled={busy || !changed} className={btnPrimary}><Save className="w-3.5 h-3.5" /> {busy ? 'Checking…' : 'Save'}</button>
+        </div>
+        <p className="text-xs text-slate-500">
+          Only https, no path (e.g. <span className="font-mono">https://crm.yourcompany.com</span>). Leave empty to use the default. For your own domain, first add it to the Netlify site (Domain settings);
+          it is saved only when this app answers at that address.
+        </p>
+        <p className="text-xs text-amber-800 flex gap-1.5"><AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-px" /> Changing it changes every business&apos;s webhook URL: they must update it in Meta.</p>
+      </form>
+    </Card>
+  );
+}
 
 function Card({ icon: Icon, title, text, children }: { icon: typeof Palette; title: string; text: string; children: ReactNode }) {
   return (

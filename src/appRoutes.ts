@@ -8,7 +8,7 @@ import type { Role } from './types';
 
 export type View =
   | 'home' | 'chat' | 'pipeline' | 'queries' | 'broadcasts' | 'flow' | 'bot_config' | 'analytics' | 'ads' | 'ai' | 'team' | 'whatsapp' | 'setup' | 'profile'
-  | 'lead_statuses' | 'leads';
+  | 'lead_statuses' | 'leads' | 'lead_assignment';
 
 export type Area = 'platform' | 'admin' | 'manager' | 'agent';
 export const AREAS: readonly Area[] = ['platform', 'admin', 'manager', 'agent'];
@@ -35,6 +35,7 @@ export const SCREENS: Record<View, { path: string; managers: boolean; group: 'wo
   whatsapp: { path: 'settings/whatsapp', managers: true, group: 'settings' },
   team: { path: 'settings/team', managers: true, group: 'settings' },
   lead_statuses: { path: 'settings/lead-statuses', managers: true, group: 'settings' },
+  lead_assignment: { path: 'settings/lead-assignment', managers: true, group: 'settings' },
   flow: { path: 'settings/bot-flow', managers: true, group: 'settings' },
   bot_config: { path: 'settings/keywords', managers: true, group: 'settings' },
   ai: { path: 'settings/ai', managers: true, group: 'settings' },

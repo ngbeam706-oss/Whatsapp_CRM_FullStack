@@ -11,17 +11,20 @@ import { useLeadStatuses, statusLook } from './leadStatuses';
 import { MoreFilters } from './leadFilters';
 import { NO_MORE_FILTERS, moreFilterParams, useStoredState, type MoreFilterValues } from './leadFilterUtils';
 import AddLeadModal from './AddLeadModal';
+import { ReturnedBadge, RenameButton } from './leadNames';
+import { otherWaName, useRenameLead } from './leadNameUtils';
 import type { Me, ShowToast, TeamResponse } from './types';
 
 interface LeadRow {
   phone: string; name: string | null; stage: string; source: string | null; tags: string[] | null; assigned_to: string | null;
   created_at: string | null; last_contacted_at: string | null; opted_out: boolean | null; first_ad_headline: string | null; last_ad_headline: string | null;
+  wa_name?: string | null; returned_at?: string | null; returned_after_days?: number | null;
 }
 interface SearchResult { total: number; leads: LeadRow[]; capped: boolean }
 interface Filters extends MoreFilterValues { status: string; assignee: string; unread: boolean; closed: 'any' | 'open' | 'closed' }
 
 const COLUMNS: Array<[string, string]> = [
-  ['name', 'Name'], ['phone', 'Phone'], ['status', 'Status'], ['statusType', 'Status type'], ['source', 'Source'], ['ad', 'Ad'],
+  ['name', 'Name'], ['waName', 'WhatsApp name'], ['phone', 'Phone'], ['status', 'Status'], ['statusType', 'Status type'], ['source', 'Source'], ['ad', 'Ad'],
   ['tags', 'Tags'], ['assigned', 'Assigned to'], ['optedOut', 'Replied STOP'], ['created', 'Created'], ['lastMessage', 'Last message date'], ['notes', 'Notes count'],
 ];
 const MAX_DELETE = 1000;
@@ -50,6 +53,7 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
   const [showExport, setShowExport] = useState(false);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState('');
+  const rename = useRenameLead(showToast);
   const shown = data?.leads || [];
   const count = allMatching ? data?.total || 0 : picked.length;
   const setFilter = (patch: Partial<Filters>) => { setF(old => ({ ...old, ...patch })); setPicked([]); setAllMatching(false); };
@@ -153,6 +157,9 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
                     <tr key={l.phone} className="hover:bg-slate-50" data-testid="lead-row">
                       <td className="p-2"><input type="checkbox" aria-label={`Select ${displayName(l)}`} checked={allMatching || picked.includes(l.phone)} onChange={() => toggle(l.phone)} /></td>
                       <td className="p-2"><button onClick={() => onOpenChat(l.phone)} className="font-semibold text-slate-800 hover:underline cursor-pointer text-left">{displayName(l)}</button>
+                        <RenameButton onClick={() => rename(l, () => { void result.refetch(); })} label={`Rename ${displayName(l)}`} />
+                        <ReturnedBadge contact={l} />
+                        {otherWaName(l) && <span className="ml-1 text-slate-500">WhatsApp: {otherWaName(l)}</span>}
                         {l.opted_out && <span className="ml-1 text-2xs px-1 rounded border border-rose-200 bg-rose-50 text-rose-700 font-semibold">STOP</span>}
                         {(l.tags || []).slice(0, 2).map(t => <span key={t} className="ml-1 text-2xs bg-slate-100 text-slate-600 rounded-full px-1.5">{t}</span>)}</td>
                       <td className="p-2 font-mono text-slate-600">+{l.phone}</td>

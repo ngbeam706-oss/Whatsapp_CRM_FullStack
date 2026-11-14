@@ -8,6 +8,7 @@ import { useApi } from './queryClient';
 import { api } from './broadcastUtils';
 import { applyLargeText, readLargeText, Drawer } from './ui';
 import { REFRESH } from './usePolling';
+import { AvailabilityToggle } from './Availability';
 
 type IconType = ComponentType<{ className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }>;
 
@@ -175,6 +176,7 @@ export function ProfileMenu({ email, role, profileTo, onRaiseQuery, onSignOut }:
           <button role="menuitem" className={row} onClick={() => { setOpen(false); navigate(profileTo); }}><UserCircle2 className="w-4 h-4" aria-hidden="true" /> My profile</button>
           <button role="menuitem" className={row} onClick={() => { setOpen(false); onRaiseQuery(); }}><LifeBuoy className="w-4 h-4" aria-hidden="true" /> Raise a query</button>
           <LargeTextToggle />
+          <AvailabilityToggle />
           <div className="border-t border-slate-100 mt-1 pt-1">
             <button role="menuitem" className={`${row} text-red-700`} onClick={() => { setOpen(false); onSignOut(); }}><LogOut className="w-4 h-4" aria-hidden="true" /> Sign out</button>
           </div>

@@ -75,6 +75,19 @@ LIVE 2026-11-11, deploy 6af44563.
   - Tests: `tests/branding.test.cjs` (6), e2e "platform console Branding", "branding from the console shows
     everywhere".
   - `src/site/siteConfig.ts` now holds only defaults.
+- **Application URL (2026-11-14, local, not deployed; no SQL):**
+  - **What it is:** Platform console → Branding → "Application URL" card, Platform Owner only. Every link the app
+    builds to itself starts with it (`server/siteUrl.cjs` `siteUrl()`):
+    - each business's WhatsApp webhook URL `<url>/webhook/<key>` (the key itself never changes),
+    - customers' call links,
+    - invite and password-reset email redirects.
+  - **Checks when saving:** https domain only (no path, port, IP or local address), and it is saved only when this
+    app answers at `<url>/api/health`. An "Are you sure?" explains that every business must paste its new webhook
+    URL into Meta and that the domain must be added in Supabase. Audited old → new.
+  - **Where it is stored:** `platform_settings.branding.appUrl`. The details save keeps it. Empty means
+    `PUBLIC_SITE_URL` (default: the Netlify address).
+  - **Not built:** a list of the businesses whose Meta app still calls the old address.
+  - **Tests:** `tests/siteUrl.test.cjs`.
 
 ## Next
 - User: run SQL 20261128, fill in Platform console -> Branding, have the legal text reviewed by a lawyer, decide

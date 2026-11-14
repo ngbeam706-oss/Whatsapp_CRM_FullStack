@@ -609,6 +609,7 @@ async function handleArogyaRuchuluBot(biz, customerNumber, customerName, incomin
     // dashboard, and shows this business's own name.
     const { url: callUrl } = require('./calls.cjs').createCallLink({
       businessId: biz, businessName: wa.businessName, phone: customerNumber, name: customerName, outbound: false,
+      baseUrl: await require('./siteUrl.cjs').siteUrl(),
     });
     const text = `📞 *${wa.businessName || 'Our'} audio line*\n\nOur team is online! Tap the link below to speak directly with our team on an audio call:\n${callUrl}`;
     const sentResp = await sendTextMessage(wa, customerNumber, text);

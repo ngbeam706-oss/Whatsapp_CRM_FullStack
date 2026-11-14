@@ -8,6 +8,7 @@ import { pointsHelp, MEDAL, initials } from './staffFormat';
 import type { Role, ShowToast, StaffPoints, StaffStats } from './types';
 import { StaffDetailsFields, changedDetails, DETAIL_KEYS, ADMIN_KEYS, type DetailKey, type StaffDetails } from './StaffDetailsFields';
 import BusinessDetailsCard from './BusinessDetailsCard';
+import { AvailabilityCard } from './Availability';
 import { useLocation } from 'react-router';
 
 // "My profile" (every staff member): my personal details, my activity and my place in the team.
@@ -38,6 +39,8 @@ export default function ProfileScreen({ showToast }: { showToast: ShowToast }) {
               <ProfileCard data={data} />
               <DetailsForm key={JSON.stringify(data.profile)} data={data} showToast={showToast} />
             </div>
+            {/* Available / Away and working hours (automatic lead assignment). */}
+            <AvailabilityCard showToast={showToast} />
             {/* The Business Admin also keeps the business's own details here. */}
             {data.profile.role === 'owner' && <BusinessDetailsCard showToast={showToast} settingsPath={`/${area || 'admin'}/settings/setup`} />}
 

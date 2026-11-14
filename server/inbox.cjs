@@ -42,12 +42,25 @@ const closeColumnsReady = () => Date.now() - closeColumnsMissingAt > 5 * 60000;
  */
 async function leadQuery(build) {
   if (closeColumnsReady()) {
+    // Names + returning columns (SQL 20261138) too, when they exist.
+    if (extraColumnsReady()) {
+      const x = await dbRequest(build(`${LEAD_FIELDS},${CLOSE_FIELDS},${EXTRA_FIELDS}`, true));
+      if (x.ok) { extraColumnsSeen = true; return x; }
+      extraColumnsMissingAt = Date.now();
+    }
     const r = await dbRequest(build(`${LEAD_FIELDS},${CLOSE_FIELDS}`, true));
     if (r.ok) return r;
     closeColumnsMissingAt = Date.now();
   }
   return dbRequest(build(LEAD_FIELDS, false));
 }
+
+// The team's saved name vs the WhatsApp name, and "returning after a long silence" (SQL 20261138). Same fallback idea.
+const EXTRA_FIELDS = 'wa_name,name_set_by,name_set_at,returned_at,returned_after_days';
+let extraColumnsMissingAt = 0;
+const extraColumnsReady = () => Date.now() - extraColumnsMissingAt > 5 * 60000;
+/** Seen working at least once (then search also looks at the WhatsApp name). */
+let extraColumnsSeen = false;
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -164,7 +177,8 @@ async function listConversations(biz, { filter = 'all', stage = '', q = '', staf
   if (search) {
     const term = encodeURIComponent(`*${search}*`);
     const phoneTerm = encodeURIComponent(`*${digits(search) || search}*`);
-    ors.push(`or(name.ilike.${term},phone.ilike.${phoneTerm})`);
+    // The saved name, the WhatsApp name (once those columns are known to exist) and the number.
+    ors.push(`or(name.ilike.${term},${extraColumnsSeen && extraColumnsReady() ? `wa_name.ilike.${term},` : ''}phone.ilike.${phoneTerm})`);
   }
   const num = String(number || '');
   if (NUMBER_ID_RE.test(num)) {
@@ -515,7 +529,7 @@ async function markRead(phone, staff) {
  * Staff edits: assignee (transfer), stage, bot pause, tags, name.
  * Changing the assignee follows transferDenied(); any other change follows ensureCanAct().
  * @param {string} phone
- * @param {{ assignedTo?: string | null, stage?: string, botPaused?: boolean, pauseHours?: number | string | null, tags?: unknown, name?: string }} input
+ * @param {{ assignedTo?: string | null, stage?: string, botPaused?: boolean, pauseHours?: number | string | null, tags?: unknown, name?: string, bookingValue?: number | string | null }} input
  * @param {Staff} staff
  */
 async function updateContact(phone, input = {}, staff) {
@@ -523,10 +537,14 @@ async function updateContact(phone, input = {}, staff) {
   if (!isPhone(phone)) return { error: 'Invalid number.' };
   /** @type {Record<string, unknown>} */
   const body = {};
-  const editsOtherThanAssignee = Object.keys(input).some(k => ['stage', 'botPaused', 'pauseHours', 'tags', 'name'].includes(k));
+  const editsOtherThanAssignee = Object.keys(input).some(k => ['stage', 'botPaused', 'pauseHours', 'tags', 'name', 'bookingValue'].includes(k));
   if ('assignedTo' in input && editsOtherThanAssignee) {
     return { error: 'Change the assignee on its own, then make other changes.' };
   }
+  /** The status before this change (for the status history). @type {string | null} */
+  let prevStage = null;
+  /** The contact before this change (for clearing a saved name). @type {any} */
+  let prevLead = null;
 
   if ('assignedTo' in input) {
     const email = input.assignedTo ? String(input.assignedTo).toLowerCase().trim() : null;
@@ -539,8 +557,20 @@ async function updateContact(phone, input = {}, staff) {
   } else if (editsOtherThanAssignee) {
     const access = await ensureCanAct(phone, staff);
     if (access.error !== undefined) return access;
+    prevStage = access.lead?.stage ? String(access.lead.stage) : null;
+    prevLead = access.lead || null;
   }
 
+  // A booking's value (optional; Ads funnel revenue). null clears it.
+  if ('bookingValue' in input) {
+    const raw = /** @type {unknown} */ (/** @type {Record<string, unknown>} */ (input).bookingValue);
+    if (raw === null || raw === '') body.booking_value = null;
+    else {
+      const v = Number(raw);
+      if (!Number.isFinite(v) || v < 0 || v > 100000000) return { error: 'The booking value must be an amount from 0.' };
+      body.booking_value = Math.round(v * 100) / 100;
+    }
+  }
   if ('stage' in input) {
     const list = await require('./leadStatuses.cjs').listFor(biz);
     if (!input.stage || !list.some(s => s.key === input.stage && s.active)) return { error: 'Unknown status.' };
@@ -554,15 +584,24 @@ async function updateContact(phone, input = {}, staff) {
   }
   if ('tags' in input) body.tags = cleanTags(input.tags);
   if ('name' in input) {
-    const name = String(input.name || '').trim().slice(0, 80);
-    if (!name) return { error: 'Name can\'t be empty.' };
-    body.name = name;
+    // The team's own name for the contact: WhatsApp never overwrites it. Empty = back to the WhatsApp name.
+    const name = String(input.name ?? '').replace(/\s+/g, ' ').trim();
+    if (name.length > 80) return { error: 'A name can be up to 80 characters.' };
+    if (/[<>]/.test(name)) return { error: 'A name can\'t contain < or >.' };
+    if (name) Object.assign(body, { name, name_set_by: emailOf(staff), name_set_at: new Date().toISOString() });
+    else Object.assign(body, { name: prevLead?.wa_name || `+${phone}`, name_set_by: null, name_set_at: null });
   }
   if (!Object.keys(body).length) return { error: 'Nothing to change.' };
-  const res = await patchLead(biz, phone, body);
+  let res = await patchLead(biz, phone, body);
+  // Before SQL 20261137 there is no booking_value column: save the rest.
+  if (!res.ok && ('booking_value' in body || 'name_set_by' in body)) {
+    const { booking_value: _skip, name_set_by: _by, name_set_at: _at, ...rest } = body;
+    res = Object.keys(rest).length ? await patchLead(biz, phone, rest) : res;
+  }
   if (!res.ok || !res.data?.length) return { error: 'Contact not found.' };
   // A booking from a Click-to-WhatsApp ad is reported to Meta (if switched on; never fails this change).
   if (body.stage) await require('./adConversions.cjs').onStage(biz, res.data[0], String(body.stage));
+  if (body.stage) await require('./statusHistory.cjs').record(biz, [{ phone, from: prevStage, to: String(body.stage) }], { by: staff.email, source: 'staff' });
   // Handed to someone else: their dashboard gets an alert (never fails this change).
   if (body.assigned_to && body.assigned_to !== emailOf(staff)) {
     try { await require('./inboxAlerts.cjs').onAssigned(biz, String(body.assigned_to)); } catch { /* alerts are best effort */ }
@@ -606,19 +645,26 @@ async function startConversation(staff, phone, name, extra = {}) {
   const room = await require('./limits.cjs').check(biz, 'contacts', 1);
   if (room.error) return { error: room.error, limitReached: true };
   const now = new Date().toISOString();
-  const res = await dbRequest('whatsapp_leads?on_conflict=business_id,phone', {
+  const typedName = String(name || '').replace(/s+/g, ' ').trim().slice(0, 80).replace(/[<>]/g, '');
+  /** @param {boolean} withSaved */
+  const insert = (withSaved) => dbRequest('whatsapp_leads?on_conflict=business_id,phone', {
     method: 'POST',
     prefer: 'resolution=merge-duplicates,return=representation',
     body: {
-      business_id: biz, phone: p, name: String(name || '').trim().slice(0, 80) || `+${p}`, source, last_contacted_at: now, status: 'active',
+      business_id: biz, phone: p, name: typedName || `+${p}`, source, last_contacted_at: now, status: 'active',
+      // A name typed by staff is the team's saved name: WhatsApp's profile name never replaces it (SQL 20261138).
+      ...(withSaved && typedName ? { name_set_by: me, name_set_at: now } : {}),
       ...(stage !== 'new' ? { stage, stage_changed_at: now } : {}),
       ...('tags' in x ? { tags: cleanTags(x.tags) } : {}),
       ...(assignTo ? { assigned_to: assignTo } : {}),
     },
   });
+  let res = await insert(true);
+  if (!res.ok && typedName) res = await insert(false);
   if (!res.ok) return { error: 'Could not add the contact.' };
   // A number deleted after it replied STOP stays opted out.
   const suppressed = await lt.reapply(biz, p);
+  await require('./statusHistory.cjs').record(biz, [{ phone: p, from: null, to: stage }], { by: staff.email, source: 'added' });
   if (note) await dbRequest('lead_notes', { method: 'POST', prefer: 'return=minimal', body: { business_id: biz, phone: p, author: staff.email, body: note } });
   if ('source' in x) {
     await dbRequest('contact_events', { method: 'POST', prefer: 'return=minimal', body: { business_id: biz, phone: p, event_type: 'lead_added', data: { by: staff.email, source } } });
@@ -687,6 +733,8 @@ async function pauseForHandover(biz, phone) {
     bot_paused: true,
     bot_paused_until: new Date(Date.now() + AUTO_PAUSE_HOURS * 3600000).toISOString(),
   });
+  // Asked for a person: if rotation is on and nobody has the chat yet, give it to the next available person.
+  await require('./leadAssignment.cjs').assignIfDue(biz, phone, { reason: 'handover' });
 }
 
 /**
@@ -707,11 +755,16 @@ async function applyStageEvent(biz, phone, event) {
   if (next !== lead.stage) {
     await patchLead(biz, phone, { stage: next, stage_changed_at: new Date().toISOString() });
     await require('./adConversions.cjs').onStage(biz, lead, next); // the bot's Book / Enquire from an ad
+    await require('./statusHistory.cjs').record(biz, [{ phone, from: lead.stage, to: next }], { by: 'bot', source: 'bot' });
   }
 }
 
+/** May searches also look at the WhatsApp name (the column is known to exist)? */
+const waNameSearchable = () => extraColumnsSeen && extraColumnsReady();
+
 module.exports = {
   closeColumnsReady,
+  waNameSearchable,
   STAGES,
   AUTO_PAUSE_HOURS,
   isWindowOpen,

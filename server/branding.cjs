@@ -66,7 +66,11 @@ function validate(input) {
   return Object.keys(errors).length ? { errors } : { value };
 }
 
-/** @typedef {{ fields: Record<string, string>, logo: { type: string, version: string } | null, updatedBy: string | null, updatedAt: string | null }} BrandingState */
+/**
+ * appUrl: the Application URL (server/siteUrl.cjs) — kept in the same `branding` object but outside FIELDS: it has
+ * its own save (with a reachability check) and isn't shown on the public site.
+ * @typedef {{ fields: Record<string, string>, appUrl: string, logo: { type: string, version: string } | null, updatedBy: string | null, updatedAt: string | null }} BrandingState
+ */
 /** @type {{ state: BrandingState, expires: number } | null} */
 let cache = null;
 
@@ -80,7 +84,8 @@ function fromRow(row) {
   const logo = LOGO_TYPES.includes(row?.brand_logo_type)
     ? { type: String(row.brand_logo_type), version: crypto.createHash('sha256').update(String(row.brand_logo_updated_at || '')).digest('hex').slice(0, 12) }
     : null;
-  return { fields, logo, updatedBy: row?.branding_updated_by || null, updatedAt: row?.branding_updated_at || null };
+  const appUrl = typeof raw.appUrl === 'string' && /^https:\/\/[a-z0-9.-]+$/.test(raw.appUrl) ? raw.appUrl : '';
+  return { fields, appUrl, logo, updatedBy: row?.branding_updated_by || null, updatedAt: row?.branding_updated_at || null };
 }
 
 /**
@@ -90,7 +95,7 @@ function fromRow(row) {
 async function get({ fresh = false } = {}) {
   if (!fresh && cache && cache.expires > Date.now()) return cache.state;
   /** @type {BrandingState} */
-  let state = { fields: {}, logo: null, updatedBy: null, updatedAt: null };
+  let state = { fields: {}, appUrl: '', logo: null, updatedBy: null, updatedAt: null };
   try {
     const r = await dbRequest('platform_settings?id=eq.1&select=branding,brand_logo_type,brand_logo_updated_at,branding_updated_by,branding_updated_at');
     if (r.ok && r.data?.[0]) state = fromRow(r.data[0]);
@@ -108,7 +113,41 @@ async function publicBranding() {
 /** For the console: also who changed it last. */
 async function adminView() {
   const s = await get({ fresh: true });
-  return { branding: s.fields, logoUrl: s.logo ? `/api/public/logo?v=${s.logo.version}` : null, updatedBy: s.updatedBy, updatedAt: s.updatedAt, fields: Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [k, { label: f.label, max: f.max }])) };
+  const { defaultSiteUrl } = require('./siteUrl.cjs');
+  return {
+    branding: s.fields, logoUrl: s.logo ? `/api/public/logo?v=${s.logo.version}` : null, updatedBy: s.updatedBy, updatedAt: s.updatedAt,
+    fields: Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [k, { label: f.label, max: f.max }])),
+    // The Application URL: saved value ('' = not set), the one in use, and the default.
+    appUrl: s.appUrl, appUrlInUse: s.appUrl || defaultSiteUrl(), appUrlDefault: defaultSiteUrl(),
+  };
+}
+
+/** The `branding` object to store: the fields plus the Application URL (when set). @param {Record<string, string>} fields @param {string} appUrl */
+const stored = (fields, appUrl) => ({ ...fields, ...(appUrl ? { appUrl } : {}) });
+
+/**
+ * Platform Owner: set the Application URL ('' = back to the default). Saved only when the app answers at
+ * <address>/api/health. Audited with the old and new address.
+ * @param {{ email: string }} admin @param {unknown} input
+ */
+async function saveAppUrl(admin, input) {
+  const site = require('./siteUrl.cjs');
+  const c = site.cleanAppUrl(input);
+  if ('error' in c) return { error: c.error, status: 400 };
+  const current = await get({ fresh: true });
+  if (c.value === current.appUrl) return adminView();
+  if (c.value && !(await site.reachable(c.value))) {
+    return { error: `This app doesn't answer at ${c.value}/api/health yet. Add the domain to the Netlify site first (Domain settings), wait for it to work, then save again.`, status: 400 };
+  }
+  const now = new Date().toISOString();
+  const r = await dbRequest('platform_settings?on_conflict=id', {
+    method: 'POST', prefer: 'resolution=merge-duplicates,return=minimal',
+    body: { id: 1, branding: stored(current.fields, c.value), branding_updated_by: admin.email, branding_updated_at: now },
+  });
+  if (!r.ok) return { error: 'Could not save. Has the branding SQL (20261128) been run in Supabase?', status: 500 };
+  cache = null;
+  await audit(admin, 'platform.app_url_changed', { from: current.appUrl || site.defaultSiteUrl(), to: c.value || site.defaultSiteUrl() });
+  return adminView();
 }
 
 /** @param {{ email: string }} admin @param {string} action @param {Record<string, unknown>} details */
@@ -129,7 +168,8 @@ async function save(admin, input) {
   const now = new Date().toISOString();
   const r = await dbRequest('platform_settings?on_conflict=id', {
     method: 'POST', prefer: 'resolution=merge-duplicates,return=minimal',
-    body: { id: 1, branding: next, branding_updated_by: admin.email, branding_updated_at: now },
+    // The Application URL is kept as it is (it has its own save).
+    body: { id: 1, branding: stored(next, current.appUrl), branding_updated_by: admin.email, branding_updated_at: now },
   });
   if (!r.ok) return { error: 'Could not save. Has the branding SQL (20261128) been run in Supabase?', status: 500 };
   cache = null;
@@ -199,4 +239,4 @@ async function logoFile() {
 
 function clearCache() { cache = null; }
 
-module.exports = { FIELDS, validate, readLogo, get, publicBranding, adminView, save, saveLogo, removeLogo, logoFile, clearCache, MAX_LOGO_BYTES };
+module.exports = { FIELDS, validate, readLogo, get, publicBranding, adminView, save, saveAppUrl, saveLogo, removeLogo, logoFile, clearCache, MAX_LOGO_BYTES };

@@ -538,6 +538,7 @@ add with the same audience in 2 steps, grouped list, Edit of a shared ad).
       `pages_read_engagement`; screencasts of phases B and C.
 
 ## Next
+- Funnel tab (conversion analytics A1 + A2) built 2026-11-14: see `docs/progress/ads-analytics.md` (A3 breakdowns, A4 suggestions next).
 - [ ] Remove the "App install ads" use case from the Meta app.
 - [ ] Confirm the CRM's WhatsApp token belongs to app 4559165697698584 (Access Token Debugger).
 - [x] Build phase A (needs no Meta approval).

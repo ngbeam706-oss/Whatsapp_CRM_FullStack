@@ -75,6 +75,7 @@ router.post('/calls/link', async (req, res) => {
       phone,
       name: typeof req.body?.name === 'string' ? req.body.name : '',
       outbound: true,
+      baseUrl: await require('./siteUrl.cjs').siteUrl(),
     });
     return res.json({ success: true, ...link });
   } catch (err) {

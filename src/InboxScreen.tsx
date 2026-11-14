@@ -8,6 +8,8 @@ import { useLeadStatuses, statusLook } from './leadStatuses';
 import { MoreFilters } from './leadFilters';
 import { NO_MORE_FILTERS, RANGE_LABEL, moreCount, moreFilterParams, useStoredState, type MoreFilterValues } from './leadFilterUtils';
 import AddLeadModal from './AddLeadModal';
+import { ReturnedBadge, RenameButton } from './leadNames';
+import { otherWaName, useRenameLead } from './leadNameUtils';
 import { useBusinessNumbers, numberName, findNumber, defaultReplyNumber, windowFor } from './inboxNumbers';
 import {
   Search, X, Send, Phone, Copy, CheckCheck, Check, Clock, AlertTriangle, Bot, UserRound, Plus, FileText,
@@ -322,6 +324,7 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
                 </div>
                 <div className="flex items-center gap-1.5 mt-1">
                   <span className={`text-2xs px-1.5 py-px rounded border font-semibold ${statusLook(leadStatuses.all, c.stage).cls}`}>{statusLook(leadStatuses.all, c.stage).label}</span>
+                  <ReturnedBadge contact={c} />
                   {c.opted_out && <span className="text-2xs px-1.5 py-px rounded border border-rose-200 bg-rose-50 text-rose-700 font-semibold">STOP</span>}
                   {multi && <NumberBadge n={findNumber(numbers, c.last_phone_number_id)} title="The number they last wrote to" />}
                   {c.assigned_to ? (
@@ -458,6 +461,7 @@ function Conversation({ convo, me, staff, numbers, showDetails, onToggleDetails,
   const c = convo.contact;
   const access = accessOf(c, me);
   const canAct = access !== 'other';
+  const rename = useRenameLead(showToast);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [showTemplate, setShowTemplate] = useState(false);
@@ -541,9 +545,13 @@ function Conversation({ convo, me, staff, numbers, showDetails, onToggleDetails,
       <div className="bg-slate-50 px-3 py-2 border-b border-wa-border flex items-center gap-2.5" data-testid="chat-header">
         <button onClick={onBack} className="md:hidden p-1 text-slate-600 cursor-pointer"><ArrowLeft className="w-4 h-4" /></button>
         <div className={`w-9 h-9 rounded-full ${avatarBg(c.phone)} text-white flex items-center justify-center font-bold text-xs flex-shrink-0`}>{initials(c)}</div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-bold text-slate-800 truncate">{displayName(c)}</div>
-          <div className="text-xs text-slate-500 font-mono truncate">+{c.phone}{c.source ? <span className="font-sans"> · {c.source}</span> : null}
+        <div className="min-w-[9rem] flex-1">
+          <div className="text-sm font-bold text-slate-800 truncate flex items-center gap-1.5">
+            <span className="truncate" data-testid="chat-name">{displayName(c)}</span>
+            {canAct && <RenameButton onClick={() => rename(c)} label="Rename contact" />}
+            <ReturnedBadge contact={c} />
+          </div>
+          <div className="text-xs text-slate-500 font-mono truncate">+{c.phone}{otherWaName(c) && <span className="font-sans" data-testid="wa-name"> · WhatsApp: {otherWaName(c)}</span>}{c.source ? <span className="font-sans"> · {c.source}</span> : null}
             {multi && lastNumber && <span className="font-sans" title="The business number they last wrote to"> · Wrote to {numberName(lastNumber)}</span>}
             {adLabel(c.last_ad_headline, c.last_ad_id) && <span className="font-sans" title="The ad they last came through"> · From ad: {adLabel(c.last_ad_headline, c.last_ad_id)}</span>}
           </div>
@@ -715,6 +723,17 @@ interface DetailsProps {
 
 function DetailsPanel({ contact: c, notes, me, staff, onUpdate, onNotesChanged, showToast }: DetailsProps) {
   const leadStatuses = useLeadStatuses();
+  const askValue = useConfirm();
+  const renameLead = useRenameLead(showToast);
+  // Moving to a booked / done kind of status: an optional amount for the Ads funnel's revenue (Cancel keeps the chat where it is).
+  const moveTo = async (key: string, label: string) => {
+    const type = leadStatuses.all.find(x => x.key === key)?.type;
+    if (type !== 'won' && type !== 'done') { onUpdate({ stage: key }, `Moved to ${label}`); return; }
+    const typed = await askValue.ask({ title: `Move to ${label}`, body: 'Booking amount, if you know it (used for revenue and return on ad spend). Leave it empty to use your usual amount.', label: 'Amount (optional)', placeholder: 'e.g. 1500', confirmLabel: 'Move' });
+    if (typed === null) return;
+    const amount = typed.replace(/[^d.]/g, '');
+    onUpdate(amount ? { stage: key, bookingValue: Number(amount) } : { stage: key }, `Moved to ${label}`);
+  };
   const [tagInput, setTagInput] = useState('');
   const [note, setNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
@@ -758,7 +777,8 @@ function DetailsPanel({ contact: c, notes, me, staff, onUpdate, onNotesChanged, 
     <aside className="hidden lg:flex w-[300px] flex-shrink-0 border-l border-wa-border bg-white flex-col overflow-y-auto">
       <div className="p-4 border-b border-slate-100 text-center">
         <div className={`w-14 h-14 rounded-full ${avatarBg(c.phone)} text-white flex items-center justify-center font-bold mx-auto`}>{initials(c)}</div>
-        <div className="text-sm font-bold text-slate-800 mt-2">{displayName(c)}</div>
+        <div className="text-sm font-bold text-slate-800 mt-2 flex items-center justify-center gap-1">{displayName(c)}{canAct && <RenameButton onClick={() => renameLead(c)} label="Rename contact" />}</div>
+        {otherWaName(c) && <div className="text-xs text-slate-500">WhatsApp: {otherWaName(c)}</div>}
         <div className="text-xs text-slate-500 font-mono">+{c.phone}</div>
         {c.opted_out && <div className="mt-2 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-0.5 inline-block">Replied STOP: no marketing messages</div>}
       </div>
@@ -771,7 +791,7 @@ function DetailsPanel({ contact: c, notes, me, staff, onUpdate, onNotesChanged, 
             {leadStatuses.all.filter(s => s.active || s.key === c.stage).map(({ key: s }) => {
               const look = statusLook(leadStatuses.all, s);
               return (
-                <button key={s} disabled={!canAct} onClick={() => s !== c.stage && onUpdate({ stage: s }, `Moved to ${look.label}`)}
+                <button key={s} disabled={!canAct} onClick={() => { if (s !== c.stage) void moveTo(s, look.label); }}
                   className={`text-xs px-2 py-1 rounded-md border font-semibold text-left flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed ${c.stage === s ? look.cls + ' ring-1 ring-offset-1 ring-slate-300' : 'border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:hover:bg-transparent'}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${look.dot}`} /> {look.label}
                 </button>

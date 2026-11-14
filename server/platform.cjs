@@ -390,7 +390,7 @@ async function resendOwnerInvite(admin, rawId) {
   if (Date.now() - (lastResend.get(id) || 0) < RESEND_GAP_MS) return { error: 'An invite was sent less than 10 minutes ago. Ask them to check spam first.', status: 429 };
   lastResend.set(id, Date.now());
   const { serviceHeaders } = require('./db.cjs');
-  const redirect = encodeURIComponent(config.publicSiteUrl);
+  const redirect = encodeURIComponent(await require('./siteUrl.cjs').siteUrl());
   const inv = await fetch(`${config.supabaseUrl}/auth/v1/invite?redirect_to=${redirect}`, { method: 'POST', headers: serviceHeaders(), body: JSON.stringify({ email }) });
   /** @type {'invite' | 'reset'} */
   let kind = 'invite';

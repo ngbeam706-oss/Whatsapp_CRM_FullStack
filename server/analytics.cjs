@@ -293,7 +293,9 @@ async function report(businessId, { days = 30 } = {}) {
 
   try {
     const [allLeads, messages, events, campaigns, automations] = await Promise.all([
-      fetchAll(`whatsapp_leads?select=phone,source,created_at,stage,assigned_to,unread_count,first_ad_id,first_ad_at,first_ad_headline,last_ad_id,last_ad_at,last_ad_headline&${b}&order=created_at.asc`),
+      // With returned_at (SQL 20261138: returning customers) when the column exists.
+      fetchAll(`whatsapp_leads?select=phone,source,created_at,stage,assigned_to,unread_count,first_ad_id,first_ad_at,first_ad_headline,last_ad_id,last_ad_at,last_ad_headline,returned_at&${b}&order=created_at.asc`)
+        .catch(() => fetchAll(`whatsapp_leads?select=phone,source,created_at,stage,assigned_to,unread_count,first_ad_id,first_ad_at,first_ad_headline,last_ad_id,last_ad_at,last_ad_headline&${b}&order=created_at.asc`)),
       // phone_number_id: the "by number" breakdown; before SQL 20261122 the column is missing, so read without it.
       fetchAll(`whatsapp_messages?select=contact_phone,direction,sent_by,timestamp,phone_number_id&${b}&timestamp=gte.${f}&order=timestamp.asc`)
         .catch(() => fetchAll(`whatsapp_messages?select=contact_phone,direction,sent_by,timestamp&${b}&timestamp=gte.${f}&order=timestamp.asc`)),
@@ -317,7 +319,10 @@ async function report(businessId, { days = 30 } = {}) {
     const statusList = await ls.listFor(businessId);
     const typed = ls.byType(statusList, allLeads);
     const leads = typed.filter(l => l.created_at && l.created_at >= from);
-    const summary = { ...summarise({ leads, allLeads: typed, messages, events, from, to }), pipeline: ls.pipelineCounts(statusList, allLeads) };
+    const base = summarise({ leads, allLeads: typed, messages, events, from, to });
+    // Returning leads (came back after a long silence in this period), counted apart from new leads.
+    const returningLeads = allLeads.filter(l => l.returned_at && l.returned_at >= from && l.returned_at < to).length;
+    const summary = { ...base, kpis: { ...base.kpis, returningLeads }, pipeline: ls.pipelineCounts(statusList, allLeads) };
 
     /** @type {Map<string, Row>} */
     const cStats = new Map((campaignStats.ok ? campaignStats.data : []).map((/** @type {Row} */ s) => [s.campaign_id, s]));

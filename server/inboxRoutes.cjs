@@ -45,6 +45,13 @@ router.put('/lead-statuses/order', requireManager, validate({ body: B.leadStatus
 router.patch('/lead-statuses/:key', requireManager, statusKey, validate({ body: B.leadStatus }), async (req, res) => reply(res, await statuses.update(req.staff, req.params.key, req.body || {})));
 router.delete('/lead-statuses/:key', requireManager, statusKey, async (req, res) => reply(res, await statuses.remove(req.staff, req.params.key, req.query.moveTo ? String(req.query.moveTo) : null)));
 
+// ---- Lead assignment (server/leadAssignment.cjs): rotation settings for managers; Available / Away for everyone ----
+const assignment = require('./leadAssignment.cjs');
+router.get('/lead-assignment', requireManager, async (req, res) => reply(res, await assignment.view(req.staff)));
+router.put('/lead-assignment', requireManager, validate({ body: B.leadAssignment }), async (req, res) => reply(res, await assignment.save(req.staff, req.body || {})));
+router.get('/me/availability', async (req, res) => reply(res, await assignment.myAvailability(req.staff)));
+router.put('/me/availability', validate({ body: B.availability }), async (req, res) => reply(res, await assignment.setMyAvailability(req.staff, req.body || {})));
+
 // The header bell: counts of what needs this person now (no names or text; server/notifications.cjs).
 router.get('/notifications', async (req, res) => {
   const staff = /** @type {import('./types.cjs').Staff} */ (req.staff);

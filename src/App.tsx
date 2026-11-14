@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense, type ReactNode } from 'react';
 import { Routes, Route, Navigate, NavLink, Link, useLocation, useNavigate } from 'react-router';
 import { BrandLogo, useBrandName } from './BrandMark';
-import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags, Contact } from 'lucide-react';
+import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags, Contact, Shuffle } from 'lucide-react';
 import { SCREENS, SETTINGS_PATH, urlOf, viewOf, canOpen, type View } from './appRoutes';
 import { supabase, saveCallRecording } from './supabaseClient';
 import { apiFetch } from './apiClient';
@@ -32,6 +32,7 @@ const BotFlowScreen = lazy(() => import('./BotFlowScreen'));
 const GenericBotFlow = lazy(() => import('./GenericBotFlow'));
 const LeadStatusesScreen = lazy(() => import('./LeadStatusesScreen'));
 const LeadsScreen = lazy(() => import('./LeadsScreen'));
+const LeadAssignmentScreen = lazy(() => import('./LeadAssignmentScreen'));
 import CallModal from './CallModal';
 import DbSyncModal from './DbSyncModal';
 import WebhookSetupModal from './WebhookSetupModal';
@@ -69,6 +70,7 @@ const NAV: Array<{ view: View; label: string; icon: typeof Inbox; tint: string }
   { view: 'whatsapp', label: 'WhatsApp', icon: Smartphone, tint: 'text-emerald-600' },
   { view: 'team', label: 'Team', icon: Users, tint: 'text-pink-600' },
   { view: 'lead_statuses', label: 'Lead statuses', icon: Tags, tint: 'text-violet-600' },
+  { view: 'lead_assignment', label: 'Lead assignment', icon: Shuffle, tint: 'text-teal-600' },
   { view: 'flow', label: 'Bot Flow', icon: GitBranch, tint: 'text-emerald-600' },
   { view: 'bot_config', label: 'Auto-replies', icon: Bot, tint: 'text-amber-600' },
   { view: 'ai', label: 'AI assistant', icon: Sparkles, tint: 'text-violet-600' },
@@ -552,7 +554,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
     item('analytics'),
   ]);
   // Settings in two plain groups (U4): the business itself, and how the bot / AI answer customers.
-  const settingsBusiness = pick((['setup', 'whatsapp', 'team', 'lead_statuses'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
+  const settingsBusiness = pick((['setup', 'whatsapp', 'team', 'lead_statuses', 'lead_assignment'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
   const settingsBot = pick((['flow', 'bot_config', 'ai'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
   const youItems = pick([item('profile')]);
   const groups: ShellGroup[] = [
@@ -690,6 +692,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
                 {screenRoute('whatsapp', <WhatsAppScreen showToast={showToast} onShowWebhook={() => setShowSetupModal(true)} onShowData={() => setShowDbModal(true)} />)}
                 {screenRoute('team', <TeamScreen showToast={showToast} />)}
                 {screenRoute('lead_statuses', <LeadStatusesScreen showToast={showToast} />)}
+                {screenRoute('lead_assignment', <LeadAssignmentScreen showToast={showToast} />)}
                 {screenRoute('flow', (
                   // Arogya Ruchulu's food bot has its own editor; every other business gets the basic flow.
                   // (Wait for the catalog: until then we don't know which bot this business has.)

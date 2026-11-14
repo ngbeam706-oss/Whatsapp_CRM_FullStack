@@ -111,6 +111,15 @@ ANSWERS['/api/lead-statuses'] = {
 // Inbox / Leads filter menus (server/leadsTools.cjs filterOptions).
 ANSWERS['/api/inbox-filter-options'] = { sources: ['Direct WhatsApp', 'Instagram Ad', 'Phone call', 'Walk-in'], tags: ['vip'], ads: [{ id: '555', headline: 'Free check-up' }], addSources: ['Phone call', 'Walk-in', 'Referral', 'Website form', 'Other'] };
 
+// Available / Away (server/leadAssignment.cjs) and the rotation settings.
+ANSWERS['/api/me/availability'] = { availability: { available: true, days: [0, 1, 2, 3, 4, 5, 6], startHour: null, endHour: null, onShift: true }, sendWindow: { start: 9, end: 20 } };
+ANSWERS['/api/lead-assignment'] = {
+  settings: { mode: 'off', maxOpen: null, perNumber: false, updatedBy: null, updatedAt: null },
+  teams: [{ numberId: '', members: [], availableNow: [] }],
+  people: [{ email: 'owner@e2e.test', role: 'owner', available: true, onShift: true, atCap: false, open: 1 }, { email: 'agent@e2e.test', role: 'agent', available: false, onShift: true, atCap: false, open: 0 }],
+  numbers: [{ id: '111111111111111', label: '', phoneNumber: '919000000100', main: true }], sendWindow: { start: 9, end: 20 }, tableReady: true,
+};
+
 /** Fake signed-in owner + canned API. Returns a counter of GET requests per path. */
 async function fakeBackend(page, { role = 'owner' } = {}) {
   const hits = {};
@@ -419,7 +428,7 @@ test('each screen has its own address in the role\'s area: refresh stays, Back w
   await page.goto('/app');
   await expect(page).toHaveURL(/\/admin\/home$/, { timeout: 20000 });
   const menu = page.getByRole('navigation', { name: 'Main menu' });
-  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
+  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
   await menu.getByRole('link', { name: 'Ads', exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/ads\/results$/);
   await expect(menu.getByRole('link', { name: 'Ads', exact: true })).toHaveAttribute('aria-current', 'page');
@@ -796,11 +805,11 @@ test('managers and the Business Admin still get every page', async ({ page }) =>
   await page.goto('/app');
   const menu = page.getByRole('navigation', { name: 'Main menu' });
   await expect(menu.getByRole('link', { name: 'Inbox' })).toBeVisible({ timeout: 20000 });
-  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
+  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
   await openScreen(page, 'Setup');
   // Phones: the settings pages also get their own row at the top of the Settings area.
   await page.setViewportSize({ width: 390, height: 800 });
-  await expect(page.getByRole('navigation', { name: 'Settings menu' }).getByRole('link')).toHaveText(['Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Bot Flow', 'Auto-replies', 'AI assistant']);
+  await expect(page.getByRole('navigation', { name: 'Settings menu' }).getByRole('link')).toHaveText(['Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Bot Flow', 'Auto-replies', 'AI assistant']);
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(page.getByText('Business Admin', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/owner-header.png' });
@@ -1184,7 +1193,7 @@ test('Ads: "Create WhatsApp ads" is its own tab; its checklist shows what is mis
   await page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: /^Ads/ }).click({ timeout: 20000 });
   // Tabs: Ad results (default) / Create WhatsApp ads / Setup guide. Meta is only asked when the tab opens.
   const tabs = page.getByRole('tablist', { name: 'Ads sections' });
-  await expect(tabs.getByRole('tab')).toHaveText(['Ad results', 'Create WhatsApp ads', 'Bookings to Meta', 'Setup guide'], { timeout: 15000 });
+  await expect(tabs.getByRole('tab')).toHaveText(['Ad results', 'Funnel', 'Create WhatsApp ads', 'Bookings to Meta', 'Setup guide'], { timeout: 15000 });
   await expect(tabs.getByRole('tab', { name: 'Ad results' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('ads-create-ready')).toHaveCount(0);
   await expect(page.getByTestId('guide-ads')).toHaveCount(0);
@@ -2728,4 +2737,135 @@ test('Leads page: agents get no menu item and no screen', async ({ page }) => {
   await expect(page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Inbox' })).toBeVisible({ timeout: 20000 });
   await expect(page.getByTestId('leads-screen')).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Leads', exact: true })).toHaveCount(0);
+});
+
+// ---- Lead assignment (docs/progress/lead-assignment.md) ----
+test('Lead assignment: a manager turns on round-robin and picks the team; "no one available" is shown', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page);
+  let state = structuredClone(ANSWERS['/api/lead-assignment']);
+  const sent = [];
+  await page.route('**/api/lead-assignment', route => {
+    if (route.request().method() === 'PUT') {
+      const b = route.request().postDataJSON();
+      sent.push(b);
+      state = { ...state, settings: { ...state.settings, mode: b.mode, updatedBy: ME.email }, teams: [{ numberId: '', members: b.teams[0].members, availableNow: [] }] };
+    }
+    return route.fulfill({ json: { success: true, ...state } });
+  });
+  await page.goto('/admin/settings/lead-assignment');
+  const screen = page.getByTestId('lead-assignment');
+  await expect(screen.getByRole('radio', { name: /Off/ })).toHaveAttribute('aria-checked', 'true', { timeout: 20000 });
+  await screen.getByRole('radio', { name: /Round-robin/ }).click();
+  await screen.getByRole('button', { name: 'Add agent@e2e.test' }).click();
+  await screen.getByRole('button', { name: 'Add owner@e2e.test' }).click();
+  await expect(screen.getByTestId('rotation-team').getByRole('listitem')).toHaveCount(2);
+  await expect(screen.getByTestId('rotation-team')).toContainText('Away');
+  await screen.getByRole('button', { name: 'Move owner@e2e.test up' }).click();
+  await screen.getByRole('button', { name: /Save/ }).click();
+  await expect.poll(() => sent.at(-1)).toMatchObject({ mode: 'round_robin', maxOpen: null, teams: [{ numberId: '', members: ['owner@e2e.test', 'agent@e2e.test'] }] });
+  await expect(screen.getByTestId('nobody-available')).toBeVisible();
+  await page.screenshot({ path: 'test-results/lead-assignment.png', fullPage: true });
+  expect(errors).toEqual([]);
+});
+
+test('Available / Away: the account menu switch and the My profile card', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'agent' });
+  let mine = structuredClone(ANSWERS['/api/me/availability']);
+  const sent = [];
+  await page.route('**/api/me/availability', route => {
+    if (route.request().method() === 'PUT') { const b = route.request().postDataJSON(); sent.push(b); mine = { ...mine, availability: { ...mine.availability, ...b } }; }
+    return route.fulfill({ json: { success: true, ...mine } });
+  });
+  await page.goto('/agent/inbox');
+  const menu = await openAccountMenu(page);
+  await expect(menu.getByTestId('availability-toggle')).toContainText('Available for new chats', { timeout: 20000 });
+  await menu.getByTestId('availability-toggle').click();
+  await expect.poll(() => sent.at(-1)).toEqual({ available: false });
+  await expect(menu.getByTestId('availability-toggle')).toContainText('Away');
+  await page.goto('/agent/profile');
+  const card = page.getByTestId('availability-card');
+  await expect(card).toContainText('Away', { timeout: 20000 });
+  await card.getByRole('button', { name: 'Sun' }).click();
+  await card.getByLabel('Start hour').selectOption('10');
+  await card.getByRole('button', { name: 'Save hours' }).click();
+  await expect.poll(() => sent.at(-1)).toEqual({ days: [1, 2, 3, 4, 5, 6], startHour: 10, endHour: null });
+  expect(errors).toEqual([]);
+});
+
+// ---- Ads funnel (A1 + A2) ----
+test('Ads Funnel tab: steps, costs, campaigns, attribution toggle and CSV; summary on Analytics', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page);
+  await page.route('**/api/ads?*', r => r.fulfill({ json: { adsEnabled: true, account: { connected: true, adAccountId: 'act_1', name: 'E2E Ads', currency: 'INR', lastSyncAt: NOW, alerts: { maxCostPerChat: null, maxCostPerConversion: null, windowDays: 3 } }, report: null } }));
+  const M = (o) => ({ spend: 0, impressions: 0, clicks: 0, metaChats: 0, chats: 0, replied: 0, working: 0, won: 0, done: 0, repeat: 0, lost: 0, revenue: 0, valued: 0, costPerChat: null, costPerWorking: null, costPerWon: null, costPerDone: null, wonRate: null, roas: null, ...o });
+  const tot = M({ spend: 1000, impressions: 16000, clicks: 300, metaChats: 12, chats: 5, replied: 2, working: 4, won: 3, done: 1, lost: 2, revenue: 2000, valued: 1, costPerChat: 200, costPerWon: 333.33, wonRate: 60, roas: 2 });
+  const funnel = {
+    range: { from: NOW, to: NOW, days: 30 }, currency: 'INR', attribution: 'first', avgValue: 1500,
+    totals: { ...tot, medianDaysToWon: 1.5, medianFirstReplyMin: 31.5 }, previous: { ...M({ spend: 800, chats: 4, won: 1, costPerWon: 800 }), medianDaysToWon: null, medianFirstReplyMin: null },
+    steps: [['spend', 'Spend', 1000], ['impressions', 'Impressions', 16000], ['clicks', 'Clicks', 300], ['metaChats', 'Chats started (Meta)', 12], ['chats', 'Chats in the CRM', 5], ['replied', 'Replied by the team', 2], ['working', 'Working', 4], ['won', 'Booked / ordered', 3], ['done', 'Done', 1], ['repeat', 'Returning', 0]].map(([key, label, count]) => ({ key, label, count, pctOfPrev: null })),
+    campaigns: [{ campaignId: '1001', name: 'Knee camp', ...tot, lostReasons: { not_interested: 1 }, medianDaysToWon: 1.5, adsets: [{ adsetId: '101', name: 'Hyderabad 30+', ...tot, ads: [{ adId: '11', name: 'Knee ad', ...tot }] }] }],
+    replyBands: [{ key: 'under5m', label: 'Under 5 min', chats: 1, won: 1, wonRate: 100 }], agents: [{ email: 'agent@e2e.test', chats: 5, replied: 2, won: 3, wonRate: 60, medianFirstReplyMin: 31.5 }],
+    sources: [{ source: 'Ads', leads: 5, won: 3, wonRate: 60 }, { source: 'Phone call', leads: 2, won: 1, wonRate: 50 }],
+    trend: [{ day: '2026-11-02', spend: 600, won: 1 }], campaignsList: [{ id: '1001', name: 'Knee camp' }], historyFrom: NOW,
+  };
+  const bodies = [];
+  await page.route('**/api/ads/funnel', r => { bodies.push(r.request().postDataJSON()); return r.fulfill({ json: { success: true, funnel } }); });
+  await page.route('**/api/ads/funnel/export', r => r.fulfill({ status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="ads-funnel-2026-11-14.csv"' }, body: '﻿Level,Campaign\r\n' }));
+  await page.goto('/admin/ads/funnel');
+  const f = page.getByTestId('ads-funnel');
+  await expect(f.getByTestId('funnel-kpis')).toContainText('Booked / ordered', { timeout: 20000 });
+  await expect(f.getByTestId('funnel-kpis')).toContainText('2×');
+  await expect(f.getByTestId('funnel-steps')).toContainText('Replied by the team');
+  await f.getByTestId('funnel-campaign').getByRole('button', { name: /Knee camp/ }).click();
+  await expect(f.getByText('Hyderabad 30+')).toBeVisible();
+  await expect(f.getByText(/lost: Not interested 1/)).toBeVisible();
+  await f.getByRole('button', { name: 'Last ad' }).click();
+  await expect.poll(() => bodies.at(-1)?.attribution).toBe('last');
+  await f.getByLabel('Handled by').selectOption('agent@e2e.test');
+  await expect.poll(() => bodies.at(-1)?.agent).toBe('agent@e2e.test');
+  const download = page.waitForEvent('download');
+  await f.getByRole('button', { name: /Export CSV/ }).click();
+  expect((await download).suggestedFilename()).toBe('ads-funnel-2026-11-14.csv');
+  await page.screenshot({ path: 'test-results/ads-funnel.png', fullPage: true });
+  // Analytics: the short summary.
+  await page.goto('/admin/analytics');
+  await expect(page.getByTestId('ads-funnel-summary')).toContainText('3 booked', { timeout: 20000 });
+  expect(errors).toEqual([]);
+});
+
+// ---- Returning customers + saved names (docs/progress/returning-leads.md) ----
+test('Inbox: rename a contact in the chat header (WhatsApp name shown under it), "Back after" badge and the Returning filter', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page);
+  const back = { ...LEAD, name: 'Ravi Kumar', wa_name: '😎 Ravi', name_set_by: 'owner@e2e.test', returned_at: NOW, returned_after_days: 120, assigned_to: ME.email };
+  const lists = [];
+  const sent = [];
+  await page.route('**/api/inbox**', route => {
+    const req = route.request();
+    const url = new URL(req.url());
+    if (url.pathname === '/api/inbox' && req.method() === 'GET') { lists.push(Object.fromEntries(url.searchParams)); return route.fulfill({ json: { conversations: [back] } }); }
+    if (url.pathname === `/api/inbox/${LEAD.phone}` && req.method() === 'PATCH') { sent.push(req.postDataJSON()); return route.fulfill({ json: { success: true, contact: back } }); }
+    if (url.pathname === `/api/inbox/${LEAD.phone}` && req.method() === 'GET') return route.fulfill({ json: { ...ANSWERS[`/api/inbox/${LEAD.phone}`], contact: back } });
+    return route.fallback();
+  });
+  await page.goto('/admin/inbox');
+  const row = page.locator('[data-testid="chat-row"]').first();
+  await expect(row.getByTestId('returned-badge')).toHaveText('Back after 4 months', { timeout: 20000 });
+  await row.click();
+  const header = page.getByTestId('chat-header');
+  await expect(header.getByTestId('chat-name')).toHaveText('Ravi Kumar');
+  await expect(header.getByTestId('wa-name')).toContainText('WhatsApp: 😎 Ravi');
+  await expect(header.getByTestId('returned-badge')).toBeVisible();
+  await header.getByRole('button', { name: 'Rename contact' }).click();
+  await page.getByRole('dialog').getByRole('textbox').fill('Ravi K (knee)');
+  await page.getByTestId('confirm-ok').click();
+  await expect.poll(() => sent.at(-1)).toEqual({ name: 'Ravi K (knee)' });
+  await expect(page.getByText('Name saved')).toBeVisible();
+  // The Returning filter.
+  await page.getByTestId('inbox-range').getByRole('button', { name: /Filters/ }).click();
+  await page.getByTestId('more-filters').getByLabel('Returning').check();
+  await expect.poll(() => lists.at(-1)?.returning).toBe('true');
+  expect(errors).toEqual([]);
 });

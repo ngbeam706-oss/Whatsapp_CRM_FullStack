@@ -51,6 +51,12 @@ export type ShowToast = (message: string) => void;
 export interface Contact {
   phone: string;
   name?: string | null;
+  /** WhatsApp profile name (updated on every customer message); `name` is the team's saved name when name_set_by is set. */
+  wa_name?: string | null;
+  name_set_by?: string | null;
+  /** Came back after a long silence (server/returningLeads.cjs). */
+  returned_at?: string | null;
+  returned_after_days?: number | null;
   last_message?: string | null;
   last_contacted_at?: string | null;
   last_inbound_at?: string | null;
@@ -151,6 +157,8 @@ export interface ContactPatch {
   assignedTo?: string | null;
   /** A status key of the business (src/leadStatuses.ts). */
   stage?: Stage | string;
+  /** Optional booking amount when moving to a booked / done kind of status (Ads funnel revenue). */
+  bookingValue?: number | null;
   botPaused?: boolean;
   pauseHours?: number;
   tags?: string[];

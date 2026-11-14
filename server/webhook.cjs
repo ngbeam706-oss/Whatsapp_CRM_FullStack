@@ -34,7 +34,7 @@ const HANDOVER_IDS = new Set(['btn_talk_staff', 'row_talk_nutritionist', 'row_ta
  * @returns {Promise<{ ok: boolean, lead: any }>}
  */
 async function loadContact(biz, phone) {
-  const res = await dbRequest(`whatsapp_leads?select=phone,stage,bot_paused,bot_paused_until&business_id=eq.${biz}&phone=eq.${encodeURIComponent(phone)}`);
+  const res = await dbRequest(`whatsapp_leads?select=phone,stage,bot_paused,bot_paused_until,last_inbound_at,assigned_to&business_id=eq.${biz}&phone=eq.${encodeURIComponent(phone)}`);
   if (!res.ok || !Array.isArray(res.data)) return { ok: false, lead: null };
   return { ok: true, lead: res.data[0] || null };
 }
@@ -294,6 +294,11 @@ async function handleIncomingMessage(biz, msg, value, contactName, receivedAt, n
   if (isNew) await require('./leadsTools.cjs').reapply(biz, msg.from);
   // Also records the number the customer wrote to: every reply below (whatsappFor) goes out from it.
   try { await inbox.onInbound(biz, msg.from, numberId); } catch (err) { console.error('[Inbox unread error]', err); }
+  // Back after a long silence (server/returningLeads.cjs): status by type, owner re-checked. Uses the lead as it was
+  // BEFORE this message (its previous customer message).
+  if (before.ok && before.lead) await require('./returningLeads.cjs').apply(biz, msg.from, before.lead, { numberId });
+  // Rotation (server/leadAssignment.cjs): an unassigned chat goes to the next available person. Off = no change.
+  await require('./leadAssignment.cjs').assignIfDue(biz, msg.from, { numberId });
   // Alert the team's open dashboards (no name, number or text in the alert; never stops the message).
   try { await require('./inboxAlerts.cjs').onInbound(biz, msg.from, isNew); } catch (err) { console.error('[Inbox alert error]', errText(err)); }
 

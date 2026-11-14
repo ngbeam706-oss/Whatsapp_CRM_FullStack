@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { RotateCw, Hand, Kanban, Lock, UserPlus } from 'lucide-react';
 import AddLeadModal from './AddLeadModal';
+import { ReturnedBadge, RenameButton } from './leadNames';
+import { useRenameLead } from './leadNameUtils';
 import { api, btnSecondary } from './broadcastUtils';
 import { REFRESH } from './usePolling';
 import { useApi, refreshApi, setApiData, errorOf } from './queryClient';
@@ -37,6 +39,7 @@ export default function PipelineScreen({ onOpenChat, showToast }: Props) {
   const [over, setOver] = useState<string | null>(null);
   const [mine, setMine] = useState(false);
   const [adding, setAdding] = useState(false);
+  const rename = useRenameLead(showToast);
   const [phoneStage, setPhoneStage] = useState<string>('new'); // phones show one status at a time
   const shownStage = keys.includes(phoneStage) ? phoneStage : keys[0];
 
@@ -128,6 +131,7 @@ export default function PipelineScreen({ onOpenChat, showToast }: Props) {
                             <div className={`w-7 h-7 rounded-full ${avatarBg(c.phone)} text-white flex items-center justify-center font-bold text-xs flex-shrink-0`}>{initials(c)}</div>
                             <div className="min-w-0 flex-1">
                               <div className="text-xs font-semibold text-slate-800 truncate">{displayName(c)}</div>
+                              <ReturnedBadge contact={c} />
                               <div className="text-xs text-slate-400">{shortTime(c.last_contacted_at)}{c.source ? ` · ${c.source}` : ''}</div>
                             </div>
                             {(c.unread_count ?? 0) > 0 && <span className="min-w-[16px] h-4 px-1 rounded-full bg-wa-green text-white text-2xs font-bold flex items-center justify-center">{c.unread_count}</span>}
@@ -137,6 +141,7 @@ export default function PipelineScreen({ onOpenChat, showToast }: Props) {
                         <div className="flex items-center gap-1.5 mt-2">
                           {(c.tags || []).slice(0, 2).map(t => <span key={t} className="text-2xs bg-slate-100 text-slate-600 rounded-full px-1.5">{t}</span>)}
                           {c.bot_paused && <span title="Bot paused: staff handling"><Hand className="w-3 h-3 text-amber-600" /></span>}
+                          {!locked && <RenameButton onClick={() => rename(c)} label={`Rename ${displayName(c)}`} />}
                           {locked && <Lock className="w-3 h-3 text-slate-400 ml-auto" />}
                           <select value={stage} disabled={locked} onChange={e => move(c.phone, e.target.value)} onClick={e => e.stopPropagation()}
                             className={`text-xs border border-slate-200 rounded px-1 py-0.5 bg-white text-slate-600 cursor-pointer disabled:cursor-not-allowed disabled:bg-slate-50 ${locked ? '' : 'ml-auto'}`} title={locked ? 'View only' : 'Move to status'} aria-label="Move to stage">

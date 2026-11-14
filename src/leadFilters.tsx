@@ -39,6 +39,7 @@ export function MoreFilters({ value, onChange, compact = false }: { value: MoreF
           {opts.tags.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       )}
+      <label className="flex items-center gap-1 text-slate-600" title="Wrote again after a long silence (Settings -> Lead assignment)"><input type="checkbox" checked={!!value.returning} onChange={e => set({ returning: e.target.checked })} /> Returning</label>
       <label className="flex items-center gap-1 text-slate-600"><input type="checkbox" checked={value.optedOut} onChange={e => set({ optedOut: e.target.checked })} /> Replied STOP</label>
     </div>
   );

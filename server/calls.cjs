@@ -77,10 +77,11 @@ function verifyToken(token, now = Date.now()) {
 
 /**
  * A call link for one customer of one business.
- * @param {{ businessId: string, businessName?: string | null, phone: string, name?: string | null, outbound: boolean, now?: number }} input
+ * @param {{ businessId: string, businessName?: string | null, phone: string, name?: string | null, outbound: boolean, now?: number, baseUrl?: string }} input
+ *   baseUrl: the app's address (server/siteUrl.cjs siteUrl()); default PUBLIC_SITE_URL
  * @returns {{ url: string, roomId: string }}
  */
-function createCallLink({ businessId, businessName, phone, name, outbound, now = Date.now() }) {
+function createCallLink({ businessId, businessName, phone, name, outbound, now = Date.now(), baseUrl = config.publicSiteUrl }) {
   if (!isBusinessId(businessId)) throw new Error('createCallLink: invalid business');
   const roomId = `room_${crypto.randomBytes(16).toString('hex')}`;
   const token = signToken({
@@ -94,7 +95,7 @@ function createCallLink({ businessId, businessName, phone, name, outbound, now =
   const params = new URLSearchParams({ room: roomId, t: token });
   const biz = String(businessName || '').trim().slice(0, 80);
   if (biz) params.set('business', biz);
-  return { url: `${config.publicSiteUrl}/call.html?${params.toString()}`, roomId };
+  return { url: `${baseUrl}/call.html?${params.toString()}`, roomId };
 }
 
 /**

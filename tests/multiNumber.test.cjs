@@ -297,7 +297,8 @@ test('N2: the inbox filters by the number the customer last wrote to (old contac
   } finally { global.fetch = realFetch; }
   // Main number: contacts with no number recorded count too; with a search both groups must match.
   const mainQuery = decodeURIComponent(urls.filter(u => u.includes('whatsapp_leads?')).at(-1));
-  assert.match(mainQuery, /and=\(or\(name\.ilike\.\*old\*,phone\.ilike\.\*old\*\),or\(last_phone_number_id\.eq\.222000000000001,last_phone_number_id\.is\.null\)\)/);
+  // (The WhatsApp name is searched too once that column exists: SQL 20261138.)
+  assert.match(mainQuery, /and=\(or\(name\.ilike\.\*old\*,(wa_name\.ilike\.\*old\*,)?phone\.ilike\.\*old\*\),or\(last_phone_number_id\.eq\.222000000000001,last_phone_number_id\.is\.null\)\)/);
 });
 
 test('N2: "Reply from" another number uses THAT number\'s 24-hour window; a foreign number is refused', async () => {

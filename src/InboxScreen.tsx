@@ -6,10 +6,13 @@ import type {
 } from './types';
 import { useLeadStatuses, statusLook } from './leadStatuses';
 import { MoreFilters } from './leadFilters';
+import { CustomFieldFilters } from './customFilters';
+import { activeCustomFilters, useFilterableFields, type CustomFilterValue } from './customFilterUtils';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { NO_MORE_FILTERS, RANGE_LABEL, moreCount, moreFilterParams, useStoredState, type MoreFilterValues } from './leadFilterUtils';
 import AddLeadModal from './AddLeadModal';
 import ChatAppointmentButton from './ChatAppointmentButton';
-import { ReturnedBadge, RenameButton } from './leadNames';
+import { ImportedBadge, ReturnedBadge, RenameButton } from './leadNames';
 import { otherWaName, useRenameLead } from './leadNameUtils';
 import { useBusinessNumbers, numberName, findNumber, defaultReplyNumber, windowFor } from './inboxNumbers';
 import {
@@ -17,7 +20,7 @@ import {
   ArrowLeft, StickyNote, Tag, PanelRightOpen, PanelRightClose, Trash2, MessageSquare, Hand, Lock, Sparkles,
   UserPlus, SlidersHorizontal,
 } from 'lucide-react';
-import { api, templateNeeds, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { api, ApiError, templateNeeds, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
 import CallRecordingPlayer from './CallRecordingPlayer';
 import { TemplatePreview, VariableInput } from './BroadcastUi';
 import { REFRESH } from './usePolling';
@@ -109,6 +112,17 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
   const leadStatuses = useLeadStatuses(); // the business's own statuses (shared cache)
   // Date range (default: active in the last 2 days) and more filters, remembered per person in this browser.
   const [more, setMore] = useStoredState<MoreFilterValues>(`inbox-filters:${me.email}`, { ...NO_MORE_FILTERS, range: '2d' });
+  // Customer-field filters (D4): ranges, dates, choices, yes/no (no free text in the Inbox). Sent in a POST body, never
+  // the address. Only fields this person can filter by NOW are sent and shown (a field made private or hidden since is dropped).
+  const [customF, setCustomF] = useStoredState<{ list: CustomFilterValue[] }>(`inbox-custom-filters:${me.email}`, { list: [] });
+  const filterable = useFilterableFields(false);
+  const usableKeys = useMemo(() => new Set(filterable.fields.map(f => f.key)), [filterable.fields]);
+  const customActive = useMemo(() => (filterable.loading ? [] : activeCustomFilters(customF.list).filter(c => c.contains === undefined && usableKeys.has(c.key))), [filterable.loading, customF.list, usableKeys]);
+  useEffect(() => {
+    if (filterable.loading) return;
+    const kept = customF.list.filter(c => usableKeys.has(c.key));
+    if (kept.length !== customF.list.length) setCustomF({ list: kept });
+  }, [filterable.loading, usableKeys, customF.list, setCustomF]);
   const [showMore, setShowMore] = useState(false);
   const [showAddLead, setShowAddLead] = useState(false);
   const [q, setQ] = useState('');
@@ -129,9 +143,29 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
   }, [q]);
   const byPerson = isManager && filter !== 'mine' && filter !== 'unassigned' ? assignee : '';
   // A search looks through every date (the range would hide an older chat someone is looking for).
-  const moreParams = moreFilterParams(searchQ ? { ...more, range: 'all' } : more);
-  const listPath = `/api/inbox?${new URLSearchParams({ filter, stage, q: searchQ, ...(activeNumberFilter ? { number: activeNumberFilter } : {}), ...(byPerson ? { assignee: byPerson } : {}), ...moreParams })}`;
-  const listQuery = useApi<{ conversations?: InboxContact[] }>(listPath, { refetchInterval: REFRESH.inboxList, keepPrevious: true });
+  const moreParams: Record<string, string> = moreFilterParams(searchQ ? { ...more, range: 'all' } : more);
+  const listArgs = { filter, stage, q: searchQ, ...(activeNumberFilter ? { number: activeNumberFilter } : {}), ...(byPerson ? { assignee: byPerson } : {}), ...moreParams };
+  const listPath = `/api/inbox?${new URLSearchParams(listArgs)}`;
+  const withCustom = customActive.length > 0;
+  const getQuery = useApi<{ conversations?: InboxContact[] }>(withCustom ? null : listPath, { refetchInterval: REFRESH.inboxList, keepPrevious: true });
+  const listBody = { ...listArgs, custom: customActive };
+  const postQuery = useQuery<{ conversations?: InboxContact[] }, Error>({
+    queryKey: ['api', '/api/inbox/list', JSON.stringify(listBody)],
+    queryFn: () => api<{ conversations?: InboxContact[] }>('/api/inbox/list', { method: 'POST', body: listBody }),
+    enabled: withCustom, refetchInterval: REFRESH.inboxList, placeholderData: keepPreviousData,
+  });
+  const listQuery = withCustom ? postQuery : getQuery;
+  // A field filter the server refuses now (made private or hidden since): clear them once instead of a dead end.
+  const clearedFor = useRef('');
+  useEffect(() => {
+    const err = postQuery.error;
+    if (!withCustom || !(err instanceof ApiError) || (err.status !== 403 && err.status !== 400)) return;
+    const key = JSON.stringify(customActive);
+    if (clearedFor.current === key) return;
+    clearedFor.current = key;
+    setCustomF({ list: [] });
+    showToast('Your customer-field filters were cleared: one of them can no longer be used.');
+  }, [postQuery.error, withCustom, customActive, setCustomF, showToast]);
   const list = listQuery.data?.conversations || NO_CONTACTS;
   const listError = errorOf(listQuery);
 
@@ -139,7 +173,7 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
   const convo = convoQuery.data || null;
   const staff = useApi<TeamResponse>('/api/team').data?.staff || NO_STAFF;
 
-  const loadList = () => refreshApi('/api/inbox?');
+  const loadList = () => Promise.all([refreshApi('/api/inbox?'), refreshApi('/api/inbox/list')]);
   const loadConvo = (phone: string) => refreshApi(`/api/inbox/${phone}`);
 
   useEffect(() => {
@@ -253,10 +287,11 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
             {searchQ ? <span>Searching all dates</span> : more.range === 'all' ? <span>Showing all chats</span> : <span>Showing {RANGE_LABEL[more.range].replace(/^Last/, 'the last').replace(/^Dates…$/, 'the chosen dates').replace(/^Today$/, 'today')}</span>}
             {!searchQ && more.range !== 'all' && <>· <button onClick={() => setMore(m => ({ ...m, range: 'all' }))} className="font-semibold text-wa-teal hover:underline cursor-pointer">Show all</button></>}
             <button onClick={() => setShowMore(s => !s)} aria-expanded={showMore} className="ml-auto font-semibold text-slate-600 hover:text-slate-900 cursor-pointer flex items-center gap-1">
-              <SlidersHorizontal className="w-3.5 h-3.5" /> Filters{moreCount(more) ? ` (${moreCount(more)})` : ''}
+              <SlidersHorizontal className="w-3.5 h-3.5" /> Filters{moreCount(more) + customActive.length ? ` (${moreCount(more) + customActive.length})` : ''}
             </button>
           </div>
           {showMore && <MoreFilters value={more} onChange={setMore} compact />}
+          {showMore && <CustomFieldFilters value={customF.list} onChange={list => setCustomF({ list })} allowText={false} compact />}
           <div className="flex items-center gap-1 flex-wrap">
             {FILTERS.map(([id, label]) => (
               <button key={id} onClick={() => setFilter(id)}
@@ -328,6 +363,7 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
                 <div className="flex items-center gap-1.5 mt-1">
                   <span className={`text-2xs px-1.5 py-px rounded border font-semibold ${statusLook(leadStatuses.all, c.stage).cls}`}>{statusLook(leadStatuses.all, c.stage).label}</span>
                   <ReturnedBadge contact={c} />
+                  <ImportedBadge contact={c} />
                   {c.opted_out && <span className="text-2xs px-1.5 py-px rounded border border-rose-200 bg-rose-50 text-rose-700 font-semibold">STOP</span>}
                   {multi && <NumberBadge n={findNumber(numbers, c.last_phone_number_id)} title="The number they last wrote to" />}
                   {c.assigned_to ? (
@@ -555,6 +591,7 @@ function Conversation({ convo, me, staff, numbers, showDetails, onToggleDetails,
             <span className="truncate" data-testid="chat-name">{displayName(c)}</span>
             {canAct && <RenameButton onClick={() => rename(c)} label="Rename contact" />}
             <ReturnedBadge contact={c} />
+            <ImportedBadge contact={c} />
           </div>
           <div className="text-xs text-slate-500 font-mono truncate">+{c.phone}{otherWaName(c) && <span className="font-sans" data-testid="wa-name"> · WhatsApp: {otherWaName(c)}</span>}{c.source ? <span className="font-sans"> · {c.source}</span> : null}
             {multi && lastNumber && <span className="font-sans" title="The business number they last wrote to"> · Wrote to {numberName(lastNumber)}</span>}

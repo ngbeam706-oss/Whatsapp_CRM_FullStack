@@ -307,6 +307,16 @@ async function lookupDoctor(token) {
   return { id: row.id, userId: user.id, email: user.email || row.email, name: row.name, businessId: row.business_id };
 }
 
+/** The active doctor behind a token, or null (cached a minute, as requireDoctor). @param {string} token @returns {Promise<Doctor | null>} */
+async function doctorForToken(token) {
+  if (!token) return null;
+  const hit = doctorCache.get(token);
+  if (hit && hit.expires > Date.now()) return hit.doctor;
+  const doctor = await lookupDoctor(token);
+  doctorCache.set(token, { doctor, expires: Date.now() + CACHE_MS });
+  return doctor;
+}
+
 /**
  * Route guard: a signed-in, active doctor of an active hospital business, or 401/403.
  * @type {import('./types.cjs').Middleware}
@@ -655,5 +665,5 @@ module.exports = {
   // staff
   status, listDoctors, addDoctor, updateDoctor, slots, listAppointments, book, setStatus, recordDeskPayment,
   // doctors
-  requireDoctor, forgetDoctorLogins, _setDoctorForToken, myHours, saveMyHours, setDayOff, myQueue, markSeen,
+  requireDoctor, doctorForToken, forgetDoctorLogins, _setDoctorForToken, myHours, saveMyHours, setDayOff, myQueue, markSeen,
 };

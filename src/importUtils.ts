@@ -3,7 +3,7 @@
 // The Excel reader (read-excel-file, MIT) is downloaded only when an .xlsx file is chosen.
 
 export type CustomFieldType = 'text' | 'number' | 'amount' | 'date' | 'choice' | 'yesno';
-export interface CustomField { key: string; label: string; type: CustomFieldType; options: string[]; private: boolean; hidden: boolean; sort_order?: number }
+export interface CustomField { key: string; label: string; type: CustomFieldType; options: string[]; private: boolean; hidden: boolean; sort_order?: number; show_on_card?: boolean }
 
 /** Where a column goes. */
 export type Target =
@@ -205,4 +205,18 @@ export function rejectedCsv(headers: string[], rows: Array<{ cells: string[]; re
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return `﻿${[[...headers, 'Reason'], ...rows.map(r => [...r.cells, r.reason])].map(r => r.map(cell).join(',')).join('\r\n')}\r\n`;
+}
+
+/** A customer-field value as people read it: ₹3,00,000 · 05 Dec 2026 · Yes. */
+export function showCustomValue(f: { type: CustomFieldType; value: string | number | boolean | null | undefined }): string {
+  const v = f.value;
+  if (v === null || v === undefined || v === '') return '–';
+  if (f.type === 'yesno') return v ? 'Yes' : 'No';
+  if (f.type === 'amount') return `₹${Number(v).toLocaleString('en-IN')}`;
+  if (f.type === 'number') return Number(v).toLocaleString('en-IN');
+  if (f.type === 'date') {
+    const d = new Date(`${v}T00:00:00`);
+    return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+  return String(v);
 }

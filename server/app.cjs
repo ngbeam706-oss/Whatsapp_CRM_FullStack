@@ -65,6 +65,9 @@ app.post('/api/auth/forgot-password', rateLimit({ name: 'forgot_password', windo
   require('./validate.cjs').validate({ body: require('./validate.cjs').body.forgotPassword }),
   async (req, res) => res.json(await require('./team.cjs').forgotPassword(req.body?.email)));
 
+// ---- Signed-in people (staff, doctors, platform staff): sign-in / sign-out / own password change, for the Activity log ----
+require('./activityRoutes.cjs').authRoutes(app, apiAuthGuard);
+
 // ---- Public: is the platform under maintenance? (the sign-in page and the maintenance screen ask) ----
 const maintenance = require('./maintenance.cjs');
 app.get('/api/maintenance', async (req, res) => res.json(maintenance.publicView(await maintenance.getState())));
@@ -121,7 +124,7 @@ app.use('/api/platform', apiAuthGuard, require('./platformRoutes.cjs'));
 app.post('/api/client-errors', apiAuthGuard, rateLimit({ name: 'client_errors', windowMs: 60000, max: 10 }), requireStaff, clientErrorRoute);
 
 // ---- Staff only: dashboard API (closed while the platform is under maintenance) ----
-app.use('/api', apiAuthGuard, maintenance.gate, requireStaff, apiRoutes, broadcastRoutes, automationRoutes, inboxRoutes, whatsappRoutes, queryRoutes, adsRoutes, require('./waCallRoutes.cjs'), require('./staffRoutes.cjs'), clinicRoutes.staffRouter, require('./importRoutes.cjs'));
+app.use('/api', apiAuthGuard, maintenance.gate, requireStaff, apiRoutes, broadcastRoutes, automationRoutes, inboxRoutes, whatsappRoutes, queryRoutes, adsRoutes, require('./waCallRoutes.cjs'), require('./staffRoutes.cjs'), clinicRoutes.staffRouter, require('./importRoutes.cjs'), require('./activityRoutes.cjs').staffRouter);
 
 // ---- Fallbacks -------------------------------------------------------------
 app.use((req, res) => {

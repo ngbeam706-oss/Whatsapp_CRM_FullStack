@@ -3,7 +3,11 @@ import { Lock, LogOut } from 'lucide-react';
 import { BrandLogo, useBrandName } from './BrandMark';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
-import { markJustSignedIn } from './signInFlag';
+import { markJustSignedIn, reportAuthEvent, reportSignInOnce } from './signInFlag';
+
+// Opened from an emailed sign-in link (invite / password reset): that is a real sign-in for the Activity log. Read
+// before supabase-js clears the address bar.
+const ARRIVED_BY_LINK = typeof window !== 'undefined' && /access_token=/.test(window.location.hash);
 import { AppFrameSkeleton, LoadError, Spinner } from './ui';
 import type { Role } from './types';
 
@@ -36,6 +40,9 @@ export default function AuthGate({ children }: { children: (signedIn: SignedIn) 
     });
     const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (event === 'PASSWORD_RECOVERY') { setNeedsPassword(true); setIsRecovery(true); }
+      // Activity log: only a real sign-in is reported (the form below, or an emailed link) and only once per session from
+      // this tab; Supabase repeats SIGNED_IN on every refocus, which is not reported.
+      if (ARRIVED_BY_LINK && newSession?.access_token && (event === 'SIGNED_IN' || event === 'PASSWORD_RECOVERY' || event === 'INITIAL_SESSION')) void reportSignInOnce(newSession.access_token);
       setSession(newSession);
       setSessionLoaded(true);
     });
@@ -68,7 +75,8 @@ export default function AuthGate({ children }: { children: (signedIn: SignedIn) 
     return () => { cancelled = true; };
   }, [userId, attempt]);
 
-  const signOut = () => { supabase.auth.signOut(); };
+  // Activity log: "signed out" is sent while the token still works, then the session ends.
+  const signOut = () => { void reportAuthEvent('signed-out', session?.access_token).finally(() => { void supabase.auth.signOut(); }); };
 
   const checking = !sessionLoaded || (!!userId && staffCheck.userId !== userId);
   const staff = staffCheck.userId === userId ? staffCheck.staff : null;
@@ -155,9 +163,9 @@ function LoginScreen() {
     e.preventDefault();
     setBusy(true);
     setError('');
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    const { data: signedIn, error: signInError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     if (signInError) setError(signInError.message === 'Invalid login credentials' ? 'Wrong email or password.' : signInError.message);
-    else markJustSignedIn();
+    else { markJustSignedIn(); void reportSignInOnce(signedIn.session?.access_token); }
     setBusy(false);
   };
 
@@ -243,6 +251,8 @@ function SetPasswordScreen({ email, onDone }: { email?: string; onDone: () => vo
     const { error: updErr } = await supabase.auth.updateUser({ password });
     setBusy(false);
     if (updErr) return setError(updErr.message);
+    const { data } = await supabase.auth.getSession();
+    void reportAuthEvent('password-changed', data.session?.access_token);
     onDone();
   };
 

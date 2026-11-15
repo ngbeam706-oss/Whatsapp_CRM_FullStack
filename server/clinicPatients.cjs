@@ -135,7 +135,11 @@ async function resolvePatient(staff, biz, phone, input) {
     const c = cleanPatient(sent);
     if ('error' in c) return { error: c.error };
     const r = await dbRequest(`clinic_patients?business_id=eq.${biz}&id=eq.${row.id}`, { method: 'PATCH', prefer: 'return=representation', body: { ...c.fields, updated_at: new Date().toISOString() } });
-    return r.ok && r.data?.length ? { patient: r.data[0] } : { error: 'Could not save the patient\'s details.' };
+    if (!(r.ok && r.data?.length)) return { error: 'Could not save the patient\'s details.' };
+    // Activity log: which details changed, by field name only (never the values).
+    const changed = Object.keys(c.fields).filter(k => JSON.stringify(/** @type {any} */ (c.fields)[k] ?? null) !== JSON.stringify(row[k] ?? null));
+    if (changed.length) await require('./activity.cjs').byStaff(staff, 'clinic.patient_changed', { fields: changed }, { subjectPhone: phone });
+    return { patient: r.data[0] };
   }
   if (!sent) return { error: 'Fill in the patient\'s details.' };
   const c = cleanPatient(sent);
@@ -369,7 +373,8 @@ async function followUpDone(staff, id) {
     const access = await require('./inbox.cjs').ensureCanAct(a.lead_phone, staff);
     if (access.error !== undefined) return access;
   }
-  await dbRequest(`clinic_appointments?business_id=eq.${biz}&id=eq.${a.id}&follow_up_done_at=is.null`, { method: 'PATCH', prefer: 'return=minimal', body: { follow_up_done_at: new Date().toISOString(), follow_up_done_by: String(staff.email || '').toLowerCase() } });
+  const upd = await dbRequest(`clinic_appointments?business_id=eq.${biz}&id=eq.${a.id}&follow_up_done_at=is.null`, { method: 'PATCH', prefer: 'return=representation', body: { follow_up_done_at: new Date().toISOString(), follow_up_done_by: String(staff.email || '').toLowerCase() } });
+  if (upd.ok && Array.isArray(upd.data) && upd.data.length) await require('./activity.cjs').byStaff(staff, 'clinic.follow_up_done', { appointment: a.id }, { subjectPhone: a.lead_phone });
   return { done: true };
 }
 

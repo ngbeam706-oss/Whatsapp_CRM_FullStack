@@ -111,6 +111,7 @@ async function saveProvider(input, staff) {
     });
     if (!res.ok) return { error: 'Could not remove the key.' };
     providerCache.delete(biz);
+    await require('./activity.cjs').byStaff(staff, 'ai.provider_changed', { keyRemoved: true });
     return { status: await providerStatus(biz) };
   }
   const v = validateProviderInput(input);
@@ -127,9 +128,15 @@ async function saveProvider(input, staff) {
       return { error: 'You changed provider: paste the API key for the new provider (keys only work with the service that issued them).' };
     }
   }
+  const before = await getProvider(biz, { fresh: true }).catch(() => null);
   const res = await dbRequest('ai_provider?on_conflict=business_id', { method: 'POST', prefer: 'resolution=merge-duplicates,return=minimal', body });
   if (!res.ok) return { error: 'Could not save. Has the M2 SQL been run?' };
   providerCache.delete(biz);
+  // Activity log: provider / model and "key changed" with its last 4 characters at most; never the key itself.
+  await require('./activity.cjs').byStaff(staff, 'ai.provider_changed', {
+    provider: v.provider, model: v.model, ...(before && before.provider !== v.provider ? { fromProvider: before.provider } : {}),
+    ...(before && before.model !== v.model ? { fromModel: before.model } : {}), keyChanged: !!v.apiKey, ...(v.apiKey ? { keyLast4: v.apiKey.slice(-4) } : {}),
+  });
   return { status: await providerStatus(biz) };
 }
 
@@ -202,6 +209,11 @@ async function saveSettings(input, staff) {
   });
   if (!res.ok) return { error: 'Could not save. Has the M2 SQL been run?' };
   settingsCache.delete(biz);
+  // Activity log: what changed (on/off, and that the knowledge / instructions changed); never the AI text.
+  await require('./activity.cjs').byStaff(staff, 'ai.settings_changed', {
+    ...('autoReply' in input ? { autoReply: !!input.autoReply } : {}),
+    changed: ['autoReply', 'knowledge', 'instructions'].filter(k => k in input),
+  });
   return { settings: res.data[0] };
 }
 

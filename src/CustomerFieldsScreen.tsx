@@ -2,7 +2,7 @@
 // customers (CIBIL score, loan amount, EMI date…). Managers and the Business Admin add, rename, reorder, hide and mark
 // fields private (agents then see "Hidden"). Plan limit max_custom_fields; the server checks everything.
 import { useState, type FormEvent } from 'react';
-import { ArrowDown, ArrowUp, Eye, EyeOff, IdCard, Info, Lock, LockOpen, Plus } from 'lucide-react';
+import { ArrowDown, ArrowUp, Eye, EyeOff, IdCard, Info, Kanban, Lock, LockOpen, Plus } from 'lucide-react';
 import { api, errorMessage, inputCls, inputInlineCls } from './broadcastUtils';
 import { refreshApi, useApi } from './queryClient';
 import { BUTTON, EmptyState, LoadError, PageHeader, SkeletonRows } from './ui';
@@ -68,6 +68,10 @@ export default function CustomerFieldsScreen({ showToast }: { showToast: ShowToa
                       <div className="flex-1" />
                       <button onClick={() => void patch(f, { private: !f.private }, f.private ? `"${f.label}" visible to agents` : `"${f.label}" is private`)} disabled={!!busy} className={BUTTON.quiet} aria-label={f.private ? `Make ${f.label} visible to agents` : `Make ${f.label} private`}>
                         {f.private ? <><Lock className="w-3.5 h-3.5" /> Private</> : <><LockOpen className="w-3.5 h-3.5" /> Everyone</>}
+                      </button>
+                      <button onClick={() => void patch(f, { showOnCard: !f.show_on_card }, f.show_on_card ? `"${f.label}" off the Pipeline cards` : `"${f.label}" shows on Pipeline cards`)} disabled={!!busy || (!f.show_on_card && fields.filter(x => x.show_on_card).length >= 2)}
+                        className={BUTTON.quiet} aria-label={f.show_on_card ? `Take ${f.label} off Pipeline cards` : `Show ${f.label} on Pipeline cards`} title="Up to 2 fields show on each Pipeline card">
+                        <Kanban className="w-3.5 h-3.5" /> {f.show_on_card ? 'On cards' : 'Card'}
                       </button>
                       <button onClick={() => void patch(f, { hidden: !f.hidden }, f.hidden ? `"${f.label}" shown` : `"${f.label}" hidden`)} disabled={!!busy} className={BUTTON.quiet} aria-label={f.hidden ? `Show ${f.label}` : `Hide ${f.label}`}>
                         {f.hidden ? <><Eye className="w-3.5 h-3.5" /> Show</> : <><EyeOff className="w-3.5 h-3.5" /> Hide</>}

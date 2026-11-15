@@ -20,6 +20,8 @@ export interface StaffMember {
   email: string;
   role: Role;
   created_at?: string;
+  /** Last sign-in (Activity log; managers and the Business Admin only). */
+  last_signed_in?: string | null;
   /** From "My profile" (server/staffStats.cjs). */
   full_name?: string | null;
   job_title?: string | null;
@@ -57,6 +59,10 @@ export interface Contact {
   /** Came back after a long silence (server/returningLeads.cjs). */
   returned_at?: string | null;
   returned_after_days?: number | null;
+  /** Customer import (SQL 20261142): the import that created this person, and its tag or file name. */
+  imported_at?: string | null;
+  import_id?: string | null;
+  import_name?: string | null;
   last_message?: string | null;
   last_contacted_at?: string | null;
   last_inbound_at?: string | null;

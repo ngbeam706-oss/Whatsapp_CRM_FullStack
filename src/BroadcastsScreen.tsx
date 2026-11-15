@@ -9,6 +9,8 @@ import { REFRESH } from './usePolling';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import { api, errorMessage, placeholders, templateNeeds, fmtDate, pct, inputCls, inputInlineCls, btnPrimary, btnSecondary } from './broadcastUtils';
 import { LoadError, SkeletonRows } from './ui';
+import { CustomFieldFilters } from './customFilters';
+import { activeCustomFilters, type CustomFilterValue } from './customFilterUtils';
 import { Badge, Field, TemplatePreview, VariableInput } from './BroadcastUi';
 import AutomationsTab from './AutomationsTab';
 import BroadcastGuide from './BroadcastGuide';
@@ -37,7 +39,7 @@ interface Recipient {
 interface AudienceOptions { sources: string[]; tags: string[]; total: number; optedOut: number }
 interface AudiencePreview { count: number; optedOutExcluded?: number; notInContacts?: number }
 interface Variables { header: VariableSpec[]; body: VariableSpec[]; headerMediaUrl: string }
-interface Segment { mode: 'filter' | 'list'; sources: string[]; activeWithinDays: string; tags: string[]; phones: string }
+interface Segment { mode: 'filter' | 'list'; sources: string[]; activeWithinDays: string; tags: string[]; phones: string; custom?: CustomFilterValue[] }
 type TemplateButton = NonNullable<TemplateComponent['buttons']>[number];
 interface TemplateForm {
   name: string; category: string; language: string; headerText: string; headerExample: string;
@@ -591,7 +593,7 @@ function NewCampaignForm({ templates, account, showToast, goToTemplates, onCance
   // Live audience count.
   useEffect(() => {
     const t = setTimeout(() => {
-      api<AudiencePreview>('/api/audience/preview', { method: 'POST', body: { segment } })
+      api<AudiencePreview>('/api/audience/preview', { method: 'POST', body: { segment: { ...segment, custom: activeCustomFilters(segment.custom) } } })
         .then(setPreview)
         .catch(() => setPreview(null));
     }, 400);
@@ -625,6 +627,8 @@ function NewCampaignForm({ templates, account, showToast, goToTemplates, onCance
       sources: segment.sources,
       tags: segment.tags,
       activeWithinDays: segment.activeWithinDays ? Number(segment.activeWithinDays) : null,
+      // Customer fields (D4): e.g. CIBIL at least 750, EMI due this week. AND-ed with the rest.
+      custom: activeCustomFilters(segment.custom),
     },
     sendNow,
     ...(fromExtra ? { fromNumberId: fromExtra } : {}),
@@ -787,6 +791,11 @@ function NewCampaignForm({ templates, account, showToast, goToTemplates, onCance
                     <option value="90">In the last 90 days</option>
                   </select>
                 </div>
+                <div>
+                  <div className="text-xs font-semibold text-slate-600 mb-1">Customer fields</div>
+                  <CustomFieldFilters value={segment.custom || []} onChange={custom => setSegment(s => ({ ...s, custom }))} />
+                  <p className="text-xs text-slate-500 mt-1">Pick an audience by your customer details, e.g. CIBIL score 750 or more, or EMI due this week.</p>
+                </div>
               </div>
             ) : (
               <textarea className={`${inputCls} min-h-[100px] font-mono`} value={segment.phones} onChange={e => setSegment(s => ({ ...s, phones: e.target.value }))}
@@ -796,7 +805,7 @@ function NewCampaignForm({ templates, account, showToast, goToTemplates, onCance
             <div className={`rounded-lg px-3 py-2 text-xs ${overLimit ? 'bg-amber-50 text-amber-900 border border-amber-200' : 'bg-emerald-50 text-emerald-900'}`}>
               {preview ? (
                 <>
-                  <strong>{preview.count}</strong> {preview.count === 1 ? 'person' : 'people'} will get this.
+                  <strong data-testid="audience-count">{preview.count}</strong> {preview.count === 1 ? 'person' : 'people'} will get this.
                   {(preview.optedOutExcluded ?? 0) > 0 && <> {preview.optedOutExcluded} opted-out contact{preview.optedOutExcluded === 1 ? '' : 's'} excluded.</>}
                   {(preview.notInContacts ?? 0) > 0 && <> {preview.notInContacts} pasted number{preview.notInContacts === 1 ? ' is' : 's are'} not in your contacts. Only message people who agreed to hear from you.</>}
                   {overLimit && <div className="mt-1">⚠️ That's more than your current daily limit of {account.dailyLimit}. Messages over the limit will fail. Send to a smaller group, or split it across days.</div>}

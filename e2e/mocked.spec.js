@@ -432,7 +432,7 @@ test('each screen has its own address in the role\'s area: refresh stays, Back w
   await page.goto('/app');
   await expect(page).toHaveURL(/\/admin\/home$/, { timeout: 20000 });
   const menu = page.getByRole('navigation', { name: 'Main menu' });
-  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Customer fields', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
+  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Customer fields', 'Activity log', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
   await menu.getByRole('link', { name: 'Ads', exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/ads\/results$/);
   await expect(menu.getByRole('link', { name: 'Ads', exact: true })).toHaveAttribute('aria-current', 'page');
@@ -810,11 +810,11 @@ test('managers and the Business Admin still get every page', async ({ page }) =>
   await page.goto('/app');
   const menu = page.getByRole('navigation', { name: 'Main menu' });
   await expect(menu.getByRole('link', { name: 'Inbox' })).toBeVisible({ timeout: 20000 });
-  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Customer fields', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
+  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Customer fields', 'Activity log', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
   await openScreen(page, 'Setup');
   // Phones: the settings pages also get their own row at the top of the Settings area.
   await page.setViewportSize({ width: 390, height: 800 });
-  await expect(page.getByRole('navigation', { name: 'Settings menu' }).getByRole('link')).toHaveText(['Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Customer fields', 'Bot Flow', 'Auto-replies', 'AI assistant']);
+  await expect(page.getByRole('navigation', { name: 'Settings menu' }).getByRole('link')).toHaveText(['Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Customer fields', 'Activity log', 'Bot Flow', 'Auto-replies', 'AI assistant']);
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(page.getByText('Business Admin', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/owner-header.png' });
@@ -3153,10 +3153,17 @@ test('sign-in after someone else signed out: the page left on /agent/inbox takes
     access_token: 'e2e-fake-token', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: 'e2e-refresh',
     user: { id: ME.id, email: ME.email, aud: 'authenticated', role: 'authenticated', app_metadata: {}, user_metadata: {} },
   } }));
+  // The Activity log hears about a real sign-in once (not again when the tab is focused later).
+  let signIns = 0;
+  await page.route('**/api/auth/signed-in', r => { signIns++; return r.fulfill({ json: { success: true } }); });
   await page.getByLabel('Email').fill(ME.email);
   await page.getByLabel('Password').fill('e2e-test-only-1');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/admin\/inbox$/, { timeout: 20000 });
+  await expect.poll(() => signIns).toBe(1);
+  await page.evaluate(() => { window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.waitForTimeout(300);
+  expect(signIns).toBe(1);
   await expect(page.getByRole('navigation', { name: 'Main menu' })).toBeVisible();
   await expect(page.getByTestId('area-not-allowed')).toHaveCount(0);
   // Typing another role's address afterwards is still "Not allowed" (only the moment of signing in moves you).
@@ -3573,4 +3580,215 @@ test('import dry run: a cell with two numbers shows the "only the first is impor
   await wiz.getByLabel('Consent').check();
   await wiz.getByTestId('run-check').click();
   await expect(wiz.getByTestId('check-warning')).toContainText('Only the first is imported');
+});
+
+// ---------------------------------------------------------------------------
+// Customer import D3 + D4: the "Imported customer" badge, customer-field filters, broadcast audiences, export by role.
+// ---------------------------------------------------------------------------
+const D4_FIELDS = { success: true, ready: true, canEdit: true, max: 25, types: IMPORT_FIELDS.types, fields: [
+  { key: 'cibil', label: 'CIBIL score', type: 'number', options: [], private: true, hidden: false, sort_order: 1 },
+  { key: 'loan_type', label: 'Loan type', type: 'choice', options: ['Home', 'Car'], private: false, hidden: false, sort_order: 2 },
+] };
+
+test('D3 badge: an imported person shows "Imported customer · <tag>" in the Inbox list and the chat header', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'agent' });
+  const imported = { ...LEAD, import_id: 'f0000000-0000-4000-8000-000000000002', import_name: 'loans-nov', imported_at: NOW };
+  await page.route(/\/api\/inbox\?/, r => r.fulfill({ json: { conversations: [imported] } }));
+  await page.route(`**/api/inbox/${LEAD.phone}`, r => r.fulfill({ json: { contact: imported, messages: [{ id: 1, direction: 'inbound', body: 'Hi, about my loan', timestamp: NOW }], notes: [{ id: 1, author: 'import', body: 'First message after import (loans-nov).', created_at: NOW }] } }));
+  await page.goto('/agent/inbox');
+  const row = page.locator('[data-testid="chat-row"]').first();
+  await expect(row.getByTestId('imported-badge')).toHaveText('Imported customer · loans-nov', { timeout: 20000 });
+  await row.click();
+  await expect(page.getByTestId('chat-header').getByTestId('imported-badge')).toHaveText('Imported customer · loans-nov');
+  await expect(page.getByText('First message after import (loans-nov).')).toBeVisible();
+  expect(errors.filter(e => !/404/.test(e))).toEqual([]);
+});
+
+test('D4 Leads: filter by a customer field (sent in the POST body, never the address)', async ({ page }) => {
+  await fakeBackend(page, { role: 'manager' });
+  await page.route('**/api/customer-fields', r => r.fulfill({ json: D4_FIELDS }));
+  const bodies = [];
+  await page.route('**/api/leads/search', r => { bodies.push(r.request().postDataJSON()); return r.fulfill({ json: { success: true, total: 1, leads: [LEAD], capped: false } }); });
+  await page.goto('/manager/leads');
+  const filters = page.getByTestId('custom-filters');
+  await filters.getByLabel('Filter by a customer field').selectOption('cibil', { timeout: 20000 });
+  await filters.getByLabel('CIBIL score at least').fill('750');
+  await filters.getByLabel('Filter by a customer field').selectOption('loan_type');
+  await filters.getByLabel('Loan type is').selectOption('Home');
+  await expect.poll(() => JSON.stringify(bodies.at(-1)?.filters?.custom)).toBe(JSON.stringify([{ key: 'cibil', min: '750' }, { key: 'loan_type', values: ['Home'] }]));
+  expect(page.url()).not.toContain('750');
+});
+
+test('D4 broadcast audience by customer fields: a live count from the server', async ({ page }) => {
+  await fakeBackend(page, { role: 'owner' });
+  await page.route('**/api/customer-fields', r => r.fulfill({ json: D4_FIELDS }));
+  const segments = [];
+  await page.route('**/api/audience/preview', r => {
+    const seg = r.request().postDataJSON().segment;
+    segments.push(seg);
+    const filtered = (seg.custom || []).length > 0;
+    return r.fulfill({ json: { count: filtered ? 12 : 40, optedOutExcluded: filtered ? 1 : 3, notInContacts: 0, sample: [] } });
+  });
+  await page.goto('/admin/broadcasts');
+  await page.getByRole('button', { name: 'New broadcast' }).click({ timeout: 20000 });
+  await page.getByPlaceholder('Weekend offer – Nov').fill('Home loan offer');
+  await page.locator('select').filter({ hasText: 'diwali_offer' }).selectOption('diwali_offer|en');
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByTestId('audience-count')).toHaveText('40');
+  const filters = page.getByTestId('custom-filters');
+  await filters.getByLabel('Filter by a customer field').selectOption('loan_type');
+  await filters.getByLabel('Loan type is').selectOption('Home');
+  await expect(page.getByTestId('audience-count')).toHaveText('12');
+  expect(segments.at(-1).custom).toEqual([{ key: 'loan_type', values: ['Home'] }]);
+});
+
+test('D4 export by role: managers can\'t include private fields; the Business Admin can tick them', async ({ page }) => {
+  await fakeBackend(page, { role: 'manager' });
+  await page.route('**/api/leads/search', r => r.fulfill({ json: { success: true, total: 1, leads: [LEAD], capped: false } }));
+  const asked = [];
+  await page.route('**/api/leads/export', r => { asked.push(r.request().postDataJSON()); return r.fulfill({ status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8', 'X-Lead-Count': '1' }, body: '﻿Phone\r\n' }); });
+  await page.goto('/manager/leads');
+  await page.getByRole('button', { name: /Export CSV/ }).click({ timeout: 20000 });
+  const dlg = page.getByRole('dialog');
+  await expect(dlg.getByText('Private customer fields are left out')).toBeVisible();
+  await expect(dlg.getByLabel('Include private fields')).toHaveCount(0);
+  await dlg.getByTestId('export-go').click();
+  await expect.poll(() => asked.length).toBe(1);
+  expect([asked[0].customFields, asked[0].includePrivate]).toEqual([true, false]);
+  // The Business Admin.
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  await fakeBackend(page, { role: 'owner' });
+  await page.route('**/api/leads/search', r => r.fulfill({ json: { success: true, total: 1, leads: [LEAD], capped: false } }));
+  await page.route('**/api/leads/export', r => { asked.push(r.request().postDataJSON()); return r.fulfill({ status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8', 'X-Lead-Count': '1' }, body: '﻿Phone\r\n' }); });
+  await page.goto('/admin/leads');
+  await page.getByRole('button', { name: /Export CSV/ }).click({ timeout: 20000 });
+  await page.getByRole('dialog').getByLabel('Include private fields').check();
+  await page.getByRole('dialog').getByTestId('export-go').click();
+  await expect.poll(() => asked.length).toBe(2);
+  expect(asked[1].includePrivate).toBe(true);
+});
+
+// ---- Second review of D3 + D4: stored field filters never trap the Inbox; hidden fields never filter unseen ----
+const REVIEW_FIELDS = (over = {}) => ({ success: true, ready: true, canEdit: false, max: 25, types: IMPORT_FIELDS.types, fields: [
+  { key: 'loan_type', label: 'Loan type', type: 'choice', options: ['Home', 'Car'], private: false, hidden: false, sort_order: 1, ...over },
+] });
+
+test('Inbox: a stored field filter for a field that became private is dropped, not sent (no dead end)', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.addInitScript((email) => localStorage.setItem(`inbox-custom-filters:${email}`, JSON.stringify({ list: [{ key: 'loan_type', values: ['Home'] }] })), ME.email);
+  await fakeBackend(page, { role: 'agent' });
+  // The manager made "Loan type" private: an agent's field list no longer offers it.
+  await page.route('**/api/customer-fields', r => r.fulfill({ json: REVIEW_FIELDS({ private: true }) }));
+  let posted = 0;
+  await page.route('**/api/inbox/list', r => { posted++; return r.fulfill({ status: 403, json: { success: false, error: 'Only managers and the Business Admin can filter by private fields.' } }); });
+  await page.goto('/agent/inbox');
+  await expect(page.locator('[data-testid="chat-row"]')).toHaveCount(1, { timeout: 20000 });
+  await expect(page.getByTestId('load-error')).toHaveCount(0);
+  expect(posted).toBe(0);
+  await expect.poll(() => page.evaluate((email) => localStorage.getItem(`inbox-custom-filters:${email}`), ME.email)).toBe(JSON.stringify({ list: [] }));
+  expect(errors.filter(e => !/404/.test(e))).toEqual([]);
+});
+
+test('Inbox: field filters go in a POST body; a 403 clears them once (with a note) and the list comes back; "Clear field filters" works', async ({ page }) => {
+  await page.addInitScript((email) => localStorage.setItem(`inbox-custom-filters:${email}`, JSON.stringify({ list: [{ key: 'loan_type', values: ['Home'] }] })), ME.email);
+  await fakeBackend(page, { role: 'agent' });
+  await page.route('**/api/customer-fields', r => r.fulfill({ json: REVIEW_FIELDS() }));
+  const bodies = [];
+  const getUrls = [];
+  await page.route(/\/api\/inbox\?/, r => { getUrls.push(r.request().url()); return r.fallback(); });
+  await page.route('**/api/inbox/list', r => { bodies.push(r.request().postDataJSON()); return r.fulfill({ status: 403, json: { success: false, error: 'Only managers and the Business Admin can filter by private fields.' } }); });
+  await page.goto('/agent/inbox');
+  await expect.poll(() => bodies.length, { timeout: 20000 }).toBeGreaterThan(0);
+  expect(bodies[0].custom).toEqual([{ key: 'loan_type', values: ['Home'] }]);
+  expect(getUrls.every(u => !u.includes('custom'))).toBe(true);
+  await expect(page.getByText('Your customer-field filters were cleared')).toBeVisible();
+  await expect(page.locator('[data-testid="chat-row"]')).toHaveCount(1);
+  // Clear field filters: set one by hand, then clear it.
+  await page.unroute('**/api/inbox/list');
+  await page.route('**/api/inbox/list', r => r.fulfill({ json: { conversations: [LEAD] } }));
+  await page.getByRole('button', { name: /^Filters/ }).click();
+  const panel = page.getByTestId('custom-filters');
+  await panel.getByLabel('Filter by a customer field').selectOption('loan_type');
+  await panel.getByLabel('Loan type is').selectOption('Car');
+  await expect(panel.getByTestId('custom-filter')).toHaveCount(1);
+  await panel.getByTestId('clear-custom-filters').click();
+  await expect(panel.getByTestId('custom-filter')).toHaveCount(0);
+});
+
+test('Leads: a stored filter on a field that became hidden is dropped, never sent unseen', async ({ page }) => {
+  await page.addInitScript((email) => localStorage.setItem(`leads-filters:${email}`, JSON.stringify({ custom: [{ key: 'loan_type', values: ['Home'] }] })), ME.email);
+  await fakeBackend(page, { role: 'manager' });
+  await page.route('**/api/customer-fields', r => r.fulfill({ json: { ...REVIEW_FIELDS({ hidden: true }), canEdit: true } }));
+  const bodies = [];
+  await page.route('**/api/leads/search', r => { bodies.push(r.request().postDataJSON()); return r.fulfill({ json: { success: true, total: 1, leads: [LEAD], capped: false } }); });
+  await page.goto('/manager/leads');
+  await expect(page.getByTestId('lead-row')).toHaveCount(1, { timeout: 20000 });
+  expect(bodies.length).toBeGreaterThan(0);
+  expect(bodies.every(b => !b.filters.custom)).toBe(true);
+  await expect(page.getByTestId('custom-filter')).toHaveCount(0);
+});
+
+// ---- Activity log (docs/progress/activity-log.md): the Business Admin's screen, the Security tab, CSV; managers refused ----
+const ACTIVITY_PAGE = { success: true, nextBeforeId: null, areas: { team: 'Team', chats: 'Chats', leads: 'Leads', broadcasts: 'Broadcasts', ads: 'Ads', clinic: 'Clinic', security: 'Security', settings: 'Settings' }, entries: [
+  { id: 3, at: NOW, action: 'chat.transferred', area: 'chats', actor: 'priya@e2e.test', person: 'Priya', sentence: 'Priya (manager) transferred the chat with Ravi Kumar to Arjun' },
+  { id: 2, at: NOW, action: 'team.role_changed', area: 'team', actor: 'owner@e2e.test', person: 'owner', sentence: "You changed Arjun's role from agent to manager" },
+] };
+const SIGNINS_PAGE = { ...ACTIVITY_PAGE, entries: [
+  { id: 9, at: NOW, action: 'auth.signed_in', area: 'security', actor: 'agent@e2e.test', person: 'Arjun', sentence: 'Arjun (agent) signed in from a new device', security: { device: 'Chrome on Android', network: '49.37.12.x', newDevice: true } },
+] };
+
+test('Activity log (Business Admin): sentences, filters sent to the server, the Security tab and a CSV download', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'owner' });
+  const asked = [];
+  const urls = [];
+  // Filters go in the request body (POST), never in the address.
+  await page.route('**/api/activity/list', r => {
+    urls.push(r.request().url());
+    const body = r.request().postDataJSON() || {};
+    asked.push(body);
+    return r.fulfill({ json: body.tab === 'security' ? SIGNINS_PAGE : ACTIVITY_PAGE });
+  });
+  let exported = null;
+  await page.route('**/api/activity/export', r => { urls.push(r.request().url()); exported = r.request().postDataJSON(); return r.fulfill({ status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="activity-2026-11-15.csv"', 'X-Entry-Count': '2', 'X-Entry-Capped': '0' }, body: '\uFEFFTime (India),Person,Area,What happened\r\n' }); });
+  // Opening the app with a saved session (or coming back to the tab) is not a new sign-in.
+  let signIns = 0;
+  await page.route('**/api/auth/signed-in', r => { signIns++; return r.fulfill({ json: { success: true } }); });
+  await page.goto('/admin/settings/activity');
+  const screen = page.getByTestId('activity-log');
+  await expect(screen.getByTestId('activity-row')).toHaveCount(2, { timeout: 20000 });
+  await expect(screen.getByTestId('activity-row').first()).toContainText('Priya (manager) transferred the chat with Ravi Kumar to Arjun');
+  await expect(screen).not.toContainText('919000000');
+  await screen.getByLabel('Area').selectOption('chats');
+  await expect.poll(() => asked.at(-1)?.area).toBe('chats');
+  await screen.getByLabel('Search the activity').fill('ravi');
+  await expect.poll(() => asked.at(-1)?.q).toBe('ravi');
+  // CSV.
+  const download = page.waitForEvent('download');
+  await screen.getByTestId('activity-download').click();
+  expect((await download).suggestedFilename()).toBe('activity-2026-11-15.csv');
+  expect(exported).toMatchObject({ area: 'chats', q: 'ravi' });
+  expect(urls.every(u => !u.includes('?'))).toBe(true);
+  // Security tab: sign-ins with device, approximate network and the new-device flag.
+  await screen.getByRole('tab', { name: /Security/ }).click();
+  const row = screen.getByTestId('signin-row');
+  await expect(row).toContainText('Chrome on Android');
+  await expect(row).toContainText('49.37.12.x');
+  await expect(row.getByTestId('new-device')).toBeVisible();
+  await expect.poll(() => asked.at(-1)?.tab).toBe('security');
+  await page.evaluate(() => { window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange')); });
+  await page.waitForTimeout(300);
+  expect(signIns).toBe(0);
+  expect(errors.filter(e => !/404/.test(e))).toEqual([]);
+});
+
+test('Activity log: managers don\'t see it in the menu and the address shows "not allowed"', async ({ page }) => {
+  await fakeBackend(page, { role: 'manager' });
+  let asked = 0;
+  await page.route(/\/api\/activity/, r => { asked++; return r.fulfill({ status: 403, json: { success: false, error: 'Only the Business Admin can see the activity log.' } }); });
+  await page.goto('/manager/settings/activity');
+  await expect(page.getByTestId('no-access')).toContainText('This page is for the Business Admin.', { timeout: 20000 });
+  await expect(page.getByRole('navigation', { name: 'Main menu' }).getByRole('link', { name: 'Activity log' })).toHaveCount(0);
+  expect(asked).toBe(0);
 });

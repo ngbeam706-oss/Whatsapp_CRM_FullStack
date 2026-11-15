@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense, type ReactNode } from 'react';
 import { Routes, Route, Navigate, NavLink, Link, useLocation, useNavigate } from 'react-router';
 import { BrandLogo, useBrandName } from './BrandMark';
-import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags, Contact, Shuffle, CalendarDays, Stethoscope, IdCard } from 'lucide-react';
-import { SCREENS, SETTINGS_PATH, urlOf, viewOf, canOpen, type View } from './appRoutes';
+import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags, Contact, Shuffle, CalendarDays, Stethoscope, IdCard, History } from 'lucide-react';
+import { SCREENS, SETTINGS_PATH, OWNER_ONLY, urlOf, viewOf, canOpen, type View } from './appRoutes';
 import { supabase, saveCallRecording } from './supabaseClient';
 import { apiFetch } from './apiClient';
 import { SignOutButton } from './AuthGate';
@@ -37,6 +37,7 @@ const LeadStatusesScreen = lazy(() => import('./LeadStatusesScreen'));
 const LeadsScreen = lazy(() => import('./LeadsScreen'));
 const LeadAssignmentScreen = lazy(() => import('./LeadAssignmentScreen'));
 const CustomerFieldsScreen = lazy(() => import('./CustomerFieldsScreen'));
+const ActivityLogScreen = lazy(() => import('./ActivityLogScreen'));
 const AppointmentsScreen = lazy(() => import('./AppointmentsScreen'));
 const ClinicSettingsScreen = lazy(() => import('./ClinicSettingsScreen'));
 import CallModal from './CallModal';
@@ -78,6 +79,7 @@ const NAV: Array<{ view: View; label: string; icon: typeof Inbox; tint: string }
   { view: 'lead_statuses', label: 'Lead statuses', icon: Tags, tint: 'text-violet-600' },
   { view: 'lead_assignment', label: 'Lead assignment', icon: Shuffle, tint: 'text-teal-600' },
   { view: 'custom_fields', label: 'Customer fields', icon: IdCard, tint: 'text-sky-600' },
+  { view: 'activity', label: 'Activity log', icon: History, tint: 'text-slate-600' },
   { view: 'clinic', label: 'Clinic', icon: Stethoscope, tint: 'text-rose-600' },
   { view: 'flow', label: 'Bot Flow', icon: GitBranch, tint: 'text-emerald-600' },
   { view: 'bot_config', label: 'Auto-replies', icon: Bot, tint: 'text-amber-600' },
@@ -94,14 +96,14 @@ const SKELETON_OF: Partial<Record<View, SkeletonKind>> = {
 const CLINIC_VIEWS: readonly View[] = ['appointments', 'clinic'];
 
 /** Route guard: a managers' screen opened by an agent (old link, typed address) shows this, never the screen. */
-function ManagersOnly({ allowed, inbox, children }: { allowed: boolean; inbox: string; children: ReactNode }) {
+function ManagersOnly({ allowed, inbox, children, ownerOnly = false }: { allowed: boolean; inbox: string; children: ReactNode; ownerOnly?: boolean }) {
   if (allowed) return <>{children}</>;
   return (
     <div className="flex-1 flex items-center justify-center p-6" data-testid="no-access">
       <div className="bg-white rounded-xl shadow p-6 max-w-sm text-center space-y-2">
         <ShieldOff className="w-8 h-8 text-slate-400 mx-auto" />
         <h1 className="text-base font-bold text-slate-800">Not available for your role</h1>
-        <p className="text-sm text-slate-600">This page is for managers and the Business Admin.</p>
+        <p className="text-sm text-slate-600">{ownerOnly ? 'This page is for the Business Admin.' : 'This page is for managers and the Business Admin.'}</p>
         <Link to={inbox} className="inline-block mt-2 text-sm font-semibold text-wa-teal">Go to the Inbox</Link>
       </div>
     </div>
@@ -189,7 +191,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
   const setActiveView = useCallback((view: View) => routerNavigate(urlOf(base, view)), [routerNavigate, base]);
   const isManager = canManage(userRole);
   const clinicOn = !!useApi<{ enabled: boolean }>('/api/clinic/status', { staleTime: 5 * 60000 }).data?.enabled;
-  const allowed = NAV.filter(n => canOpen(n.view, isManager) && (clinicOn || !CLINIC_VIEWS.includes(n.view)));
+  const allowed = NAV.filter(n => canOpen(n.view, isManager, userRole) && (clinicOn || !CLINIC_VIEWS.includes(n.view)));
   const settingsNav = allowed.filter(n => SCREENS[n.view].group === 'settings');
   const activeView: View | null = viewOf(location.pathname, base);
   const inbox = urlOf(base, 'chat');
@@ -558,7 +560,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
   const screenRoute = (view: View, element: ReactNode) => {
     const path = SCREENS[view].group === 'settings' ? SCREENS[view].path.slice(SETTINGS_PATH.length + 1) : SCREENS[view].path;
     // Each screen's own Suspense: while its code downloads, a skeleton shaped like that screen.
-    return <Route key={view} path={`${path}/*`} element={<ManagersOnly allowed={canOpen(view, isManager)} inbox={inbox}><Suspense fallback={<ScreenLoading kind={SKELETON_OF[view] || 'list'} />}>{element}</Suspense></ManagersOnly>} />;
+    return <Route key={view} path={`${path}/*`} element={<ManagersOnly allowed={canOpen(view, isManager, userRole)} ownerOnly={OWNER_ONLY.includes(view)} inbox={inbox}><Suspense fallback={<ScreenLoading kind={SKELETON_OF[view] || 'list'} />}>{element}</Suspense></ManagersOnly>} />;
   };
 
   // ---- The frame: side menu (desktop), tab bar (phones), bell, search (src/AppShell.tsx) ----
@@ -583,7 +585,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
     item('analytics'),
   ]);
   // Settings in two plain groups (U4): the business itself, and how the bot / AI answer customers.
-  const settingsBusiness = pick((['setup', 'whatsapp', 'team', 'lead_statuses', 'lead_assignment', 'custom_fields', 'clinic'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
+  const settingsBusiness = pick((['setup', 'whatsapp', 'team', 'lead_statuses', 'lead_assignment', 'custom_fields', 'clinic', 'activity'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
   const settingsBot = pick((['flow', 'bot_config', 'ai'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
   const youItems = pick([item('profile')]);
   const groups: ShellGroup[] = [
@@ -724,6 +726,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
                 {screenRoute('lead_statuses', <LeadStatusesScreen showToast={showToast} />)}
                 {screenRoute('lead_assignment', <LeadAssignmentScreen showToast={showToast} />)}
                 {screenRoute('custom_fields', <CustomerFieldsScreen showToast={showToast} />)}
+                {screenRoute('activity', <ActivityLogScreen me={{ email: userEmail, role: userRole }} showToast={showToast} />)}
                 {screenRoute('clinic', <ClinicSettingsScreen isOwner={userRole === 'owner'} showToast={showToast} />)}
                 {screenRoute('flow', (
                   // Arogya Ruchulu's food bot has its own editor; every other business gets the basic flow.

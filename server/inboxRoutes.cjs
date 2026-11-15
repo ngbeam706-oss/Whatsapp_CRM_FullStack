@@ -29,9 +29,27 @@ router.get('/inbox', async (req, res) => {
     number: String(req.query.number || ''),
     assignee: String(req.query.assignee || ''),
     // More filters (server/leadsTools.cjs cleans them): range, from, to, statusType, source, adId, tag, optedOut.
-    extra: req.query,
+    // Customer-field filters are never read from the address (they can hold private criteria): POST /inbox/list.
+    extra: { ...req.query, custom: undefined },
+    role: req.staff.role,
   });
-  if (r.error) return res.status(500).json({ success: false, error: r.error });
+  if (r.error) return res.status(/** @type {any} */ (r).status || 500).json({ success: false, error: r.error });
+  res.json(r);
+});
+// The same list with customer-field filters (D4), which travel in the POST body, never in the address.
+router.post('/inbox/list', validate({ body: B.inboxList }), async (req, res) => {
+  const b = req.body || {};
+  const r = await inbox.listConversations(req.staff.businessId, {
+    filter: String(b.filter || 'all'),
+    stage: String(b.stage || ''),
+    q: String(b.q || ''),
+    staffEmail: req.staff.email,
+    number: String(b.number || ''),
+    assignee: String(b.assignee || ''),
+    extra: b,
+    role: req.staff.role,
+  });
+  if (r.error) return res.status(/** @type {any} */ (r).status || 500).json({ success: false, error: r.error });
   res.json(r);
 });
 
@@ -124,7 +142,7 @@ router.delete('/notes/:id', validate({ params: P.numericId }), async (req, res) 
 
 // ---- Pipeline ----------------------------------------------------------------
 router.get('/pipeline', async (req, res) => {
-  const r = await inbox.pipeline(req.staff.businessId);
+  const r = await inbox.pipeline(req.staff.businessId, req.staff.role);
   if (r.error) return res.status(500).json({ success: false, error: r.error });
   res.json(r);
 });
@@ -182,6 +200,11 @@ router.put('/business', requireOwner, async (req, res) => reply(res, await busin
 router.get('/team', async (req, res) => {
   const r = await team.listStaff(req.staff.businessId);
   if (r.error) return res.status(500).json({ success: false, error: r.error });
+  // "Last signed in" (Activity log): for managers and the Business Admin only (the Team page).
+  if (req.staff.role === 'owner' || req.staff.role === 'manager') {
+    const last = await require('./activity.cjs').lastSignedIn(req.staff.businessId);
+    r.staff = (r.staff || []).map((/** @type {any} */ m) => ({ ...m, last_signed_in: last[String(m.email || '').toLowerCase()] || null }));
+  }
   res.json({ ...r, me: { id: req.staff.id, email: req.staff.email, role: req.staff.role } });
 });
 // Passwords set by the Business Admin / managers (agents can't reset their own): server/team.cjs.

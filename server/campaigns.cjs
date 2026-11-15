@@ -16,7 +16,8 @@ const limits = require('./limits.cjs');
 
 /**
  * Who a campaign goes to: pasted numbers (mode 'list') or a filter on contacts.
- * @typedef {{ mode?: string, phones?: unknown, sources?: string[], activeWithinDays?: number | string, tags?: string[] }} Segment
+ * @typedef {{ mode?: string, phones?: unknown, sources?: string[], activeWithinDays?: number | string, tags?: string[], custom?: unknown }} Segment
+ *   custom: customer-field filters (server/customFields.cjs; AND-ed with the rest)
  * @typedef {{ phone: string, name: string | null }} Recipient
  * @typedef {{ header?: any[], body?: any[], headerMediaUrl?: string }} TemplateVariables
  * @typedef {{ name?: string, templateName?: string, language?: string, variables?: TemplateVariables, segment?: Segment, sendNow?: boolean, fromNumberId?: unknown }} CampaignInput
@@ -103,7 +104,10 @@ async function resolveAudience(biz, segment = {}) {
     return { recipients, optedOut, unknown: phones.filter(p => !known.has(p) && !suppressed.has(p)).length };
   }
 
-  const leads = await fetchLeads(biz, segmentFilter(segment));
+  // Customer-field filters (D4). Broadcasts are for managers and the Business Admin, who may use private fields.
+  const cf = await require('./customFields.cjs').filterPartsFor(biz, segment.custom, { seesPrivate: true });
+  if (cf.error !== undefined) throw Object.assign(new Error(cf.error), { status: cf.status });
+  const leads = await fetchLeads(biz, [segmentFilter(segment), ...cf.parts].filter(Boolean).join('&'));
   const recipients = leads.filter(l => !l.opted_out && /^\d{7,15}$/.test(String(l.phone))).map(l => ({ phone: l.phone, name: l.name }));
   return { recipients, optedOut: leads.filter(l => l.opted_out).length, unknown: 0 };
 }
@@ -170,7 +174,9 @@ async function createCampaign(staff, input = {}) {
   const varError = tpl.checkVariables(needs, variables);
   if (varError) return { error: varError };
 
-  const audience = await resolveAudience(biz, input.segment);
+  /** @type {Awaited<ReturnType<typeof resolveAudience>>} */
+  let audience;
+  try { audience = await resolveAudience(biz, input.segment); } catch (err) { return { error: err instanceof Error ? err.message : String(err) }; }
   if (!audience.recipients.length) return { error: 'No one matches this audience (opted-out contacts are excluded).' };
   // Plan limit: broadcast messages this month.
   const room = await limits.check(biz, 'broadcasts', audience.recipients.length);

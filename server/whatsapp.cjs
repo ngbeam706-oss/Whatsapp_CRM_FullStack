@@ -336,6 +336,13 @@ async function saveConnection(staff, input = {}) {
     method: 'POST', prefer: 'return=minimal',
     body: { business_id: id, actor_email: staff.email, actor_role: staff.role, action: 'whatsapp.connected', details: { phoneNumberId: v.phoneNumberId, wabaId: v.wabaId, tokenChanged: !!v.accessToken } },
   });
+  // Activity log: a new access token / app secret (last 4 characters of the token at most, never the secrets).
+  if (v.accessToken || v.appSecret) {
+    await require('./activity.cjs').byStaff(staff, 'whatsapp.token_changed', {
+      changed: [...(v.accessToken ? ['access token'] : []), ...(v.appSecret ? ['app secret'] : [])],
+      ...(v.accessToken ? { tokenLast4: last4(v.accessToken) } : {}),
+    });
+  }
   return {
     status: await connectionStatus(id),
     verifiedName: checked.phone.verified_name || '',

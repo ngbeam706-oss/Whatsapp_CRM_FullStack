@@ -31,14 +31,22 @@ function median(xs) {
 /** India-time day of an ISO time. @param {string} iso */
 const istDay = (iso) => new Date(Date.parse(iso) + IST_MS).toISOString().slice(0, 10);
 
+/**
+ * An existing customer (customer import D3): imported BEFORE this ad chat started. Pure.
+ * @param {Row} l @param {string | null | undefined} adAt
+ */
+const isExistingCustomer = (l, adAt) => !!l.imported_at && !!adAt && String(l.imported_at) < String(adAt);
+
 /** Empty metric counters. */
-const blank = () => ({ spend: 0, impressions: 0, clicks: 0, metaChats: 0, chats: 0, returning: 0, replied: 0, working: 0, won: 0, done: 0, repeat: 0, lost: 0, revenue: 0, valued: 0 });
+const blank = () => ({ spend: 0, impressions: 0, clicks: 0, metaChats: 0, chats: 0, existing: 0, returning: 0, replied: 0, working: 0, won: 0, done: 0, repeat: 0, lost: 0, revenue: 0, valued: 0 });
 /** Derived numbers for one row of counters. @param {ReturnType<typeof blank>} c */
 function finish(c) {
   const spend = Math.round(c.spend * 100) / 100;
   return {
     ...c, spend, revenue: Math.round(c.revenue * 100) / 100,
     costPerChat: per(spend, c.chats), costPerWorking: per(spend, c.working), costPerWon: per(spend, c.won), costPerDone: per(spend, c.done),
+    // Customer import D3: chats from people already in the business's records (imported before the ad chat) vs new people.
+    newPeople: c.chats - c.existing, existingShare: pct(c.existing, c.chats),
     wonRate: pct(c.won, c.chats), roas: c.revenue && spend ? Math.round((c.revenue / spend) * 100) / 100 : null,
   };
 }
@@ -114,8 +122,10 @@ function buildFunnel({ insights, leads, messages = [], history = [], statuses, f
     const firstReply = firstIn ? ms.find(m => m.direction !== 'inbound' && m.sent_by && m.timestamp >= firstIn.timestamp) : null;
     const replyMin = firstIn && firstReply ? (Date.parse(firstReply.timestamp) - Date.parse(firstIn.timestamp)) / 60000 : null;
     const won = reached >= RANK.won;
+    const existing = isExistingCustomer(l, at);
     for (const t of [c, total]) {
       t.chats += 1;
+      if (existing) t.existing += 1;
       if (firstReply) t.replied += 1;
       if (reached >= RANK.working) t.working += 1;
       if (won) t.won += 1;
@@ -278,7 +288,9 @@ async function report(businessId, q = {}) {
   const [insights, adLeads, allLeads, statuses, settings] = await Promise.all([
     readAll(`ad_insights_daily?select=date,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks,conversations&business_id=eq.${biz}&ad_account_id=eq.${account.ad_account_id}&date=gte.${istDay(p.prevFrom)}&order=date.asc`, 50000),
     // With the inbox "Done" reason and the booking value when those columns exist.
-    readAll(`whatsapp_leads?select=${leadCols},closed_reason,booking_value,returned_at&business_id=eq.${biz}&or=(first_ad_id.not.is.null,last_ad_id.not.is.null)`)
+    // With the import marker (SQL 20261142) when it exists, else without it.
+    readAll(`whatsapp_leads?select=${leadCols},closed_reason,booking_value,returned_at,imported_at&business_id=eq.${biz}&or=(first_ad_id.not.is.null,last_ad_id.not.is.null)`)
+      .then(r => (r.error ? readAll(`whatsapp_leads?select=${leadCols},closed_reason,booking_value,returned_at&business_id=eq.${biz}&or=(first_ad_id.not.is.null,last_ad_id.not.is.null)`) : r))
       .then(r => (r.error ? readAll(`whatsapp_leads?select=${leadCols}&business_id=eq.${biz}&or=(first_ad_id.not.is.null,last_ad_id.not.is.null)`) : r)),
     readAll(`whatsapp_leads?select=stage,source,first_ad_id,created_at&business_id=eq.${biz}&created_at=gte.${encodeURIComponent(p.from)}&created_at=lt.${encodeURIComponent(p.to)}`),
     ls.listFor(biz),
@@ -325,9 +337,9 @@ async function report(businessId, q = {}) {
 /** One row per campaign, ad set and ad. @param {Row} funnel */
 function csvOf(funnel) {
   const { toCsv } = require('./leadsTools.cjs');
-  const head = ['Level', 'Campaign', 'Ad set', 'Ad', 'Spend', 'Impressions', 'Clicks', 'Chats started (Meta)', 'Chats in CRM', 'Replied', 'Working', 'Won', 'Done', 'Repeat', 'Lost',
+  const head = ['Level', 'Campaign', 'Ad set', 'Ad', 'Spend', 'Impressions', 'Clicks', 'Chats started (Meta)', 'Chats in CRM', 'Existing customers', 'New people', 'Existing customers %', 'Replied', 'Working', 'Won', 'Done', 'Repeat', 'Lost',
     'Cost per chat', 'Cost per working', 'Cost per won', 'Cost per done', 'Won rate %', 'Revenue', 'ROAS'];
-  const line = (/** @type {string} */ level, /** @type {string} */ c, /** @type {string} */ s, /** @type {string} */ a, /** @type {Row} */ m) => [level, c, s, a, m.spend, m.impressions, m.clicks, m.metaChats, m.chats, m.replied, m.working, m.won, m.done, m.repeat, m.lost,
+  const line = (/** @type {string} */ level, /** @type {string} */ c, /** @type {string} */ s, /** @type {string} */ a, /** @type {Row} */ m) => [level, c, s, a, m.spend, m.impressions, m.clicks, m.metaChats, m.chats, m.existing, m.newPeople, m.existingShare, m.replied, m.working, m.won, m.done, m.repeat, m.lost,
     m.costPerChat, m.costPerWorking, m.costPerWon, m.costPerDone, m.wonRate, m.revenue, m.roas];
   /** @type {unknown[][]} */
   const rows = [];
@@ -342,4 +354,4 @@ function csvOf(funnel) {
   return toCsv(head, rows);
 }
 
-module.exports = { buildFunnel, bySource, period, report, csvOf, median };
+module.exports = { buildFunnel, bySource, period, report, csvOf, median, isExistingCustomer };

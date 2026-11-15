@@ -121,7 +121,10 @@ router.post('/ads/funnel/export', requireManager, gate, validate({ body: B.adsFu
   const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
   res.set('Content-Type', 'text/csv; charset=utf-8');
   res.set('Content-Disposition', `attachment; filename="ads-funnel-${day}.csv"`);
-  res.send(funnel.csvOf(r.funnel));
+  const csv = funnel.csvOf(r.funnel);
+  // Activity log: the period and how many rows (never the data).
+  await require('./activity.cjs').byStaff(req.staff, 'ads.funnel_exported', { days: r.funnel.range?.days ?? null, from: r.funnel.range?.from ?? null, to: r.funnel.range?.to ?? null, rows: Math.max(csv.split('\r\n').length - 2, 0) });
+  res.send(csv);
 });
 
 // ---- Manage (M1 + M2; server/adsManage.cjs): campaigns / ad sets / ads like Ads Manager. Managers + Business Admin;

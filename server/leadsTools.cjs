@@ -75,7 +75,8 @@ async function unsuppress(biz, phone) {
 // ---------------------------------------------------------------------------
 /**
  * @typedef {{ range: string, from: string, to: string, status: string, statusType: string, source: string, adId: string,
- *   tag: string, assignee: string, unread: boolean, number: string, closed: 'open' | 'closed' | 'any', optedOut: boolean, returning: boolean, imported: boolean, q: string }} Filters
+ *   tag: string, assignee: string, unread: boolean, number: string, closed: 'open' | 'closed' | 'any', optedOut: boolean, returning: boolean, imported: boolean, q: string, custom: unknown }} Filters
+ * custom: customer-field filters as sent (checked against the business's fields in filterParts: server/customFields.cjs)
  */
 /** Clean what the browser sent (unknown values are dropped). @param {any} input @returns {Filters} */
 function cleanFilters(input = {}) {
@@ -98,6 +99,7 @@ function cleanFilters(input = {}) {
     optedOut: f.optedOut === true || f.optedOut === 'true',
     returning: f.returning === true || f.returning === 'true',
     imported: f.imported === true || f.imported === 'true',
+    custom: Array.isArray(f.custom) ? f.custom.slice(0, 11) : typeof f.custom === 'string' ? f.custom.slice(0, 4000) : undefined,
     q: s(f.q, 40),
   };
 }
@@ -126,11 +128,15 @@ function rangeBounds(f, now = Date.now()) {
 /**
  * PostgREST pieces for the filters: `parts` (and-ed query params) and `ors` (groups, one `or` each).
  * Agents can filter on "me" / "unassigned" only. The caller adds business_id and the Done (closed_at) part.
- * @param {string} biz @param {Filters} f @param {{ staffEmail?: string, isManager?: boolean }} ctx
+ * @param {string} biz @param {Filters} f @param {{ staffEmail?: string, isManager?: boolean, allowText?: boolean }} ctx
  */
-async function filterParts(biz, f, { staffEmail = '', isManager = false } = {}) {
+async function filterParts(biz, f, { staffEmail = '', isManager = false, allowText = true } = {}) {
   /** @type {string[]} */
   const parts = [];
+  // Customer fields (D4): checked against this business's fields; private ones only for managers + Business Admin.
+  const cf = await require('./customFields.cjs').filterPartsFor(biz, f.custom, { seesPrivate: isManager, allowText });
+  if (cf.error !== undefined) return { parts, ors: [], error: cf.error, status: cf.status };
+  parts.push(...cf.parts);
   /** @type {string[]} */
   const ors = [];
   const { since, until } = rangeBounds(f);
@@ -216,14 +222,16 @@ const LIST_FIELDS = 'phone,name,stage,source,tags,assigned_to,created_at,last_co
 /** The WhatsApp name and "returning" (SQL 20261138), read when the columns exist. */
 const LIST_EXTRA = ',wa_name,name_set_by,returned_at,returned_after_days';
 /** The import marker (SQL 20261142), read when the column exists. */
-const LIST_IMPORT = ',imported_at';
+const LIST_IMPORT = ',imported_at,import_id';
 /** @param {Staff} staff */
 const denied = (staff) => (isManagerOrOwner(staff?.role) ? null : { error: 'Only managers and the Business Admin can use the Leads page.', status: 403 });
 
 /** Every lead matching (up to `max`), in pages. @param {Staff} staff @param {Filters} f @param {string} fields @param {number} max */
 async function matching(staff, f, fields, max) {
   const biz = requireBusinessId(staff.businessId);
-  const { parts, ors } = await filterParts(biz, f, { staffEmail: staff.email, isManager: true });
+  const fp = await filterParts(biz, f, { staffEmail: staff.email, isManager: true });
+  if (fp.error !== undefined) return { error: fp.error, status: fp.status };
+  const { parts, ors } = fp;
   /** @type {Row[]} */
   const rows = [];
   for (let offset = 0; offset < max; offset += PAGE) {
@@ -258,7 +266,7 @@ async function selected(biz, phones, fields) {
 }
 
 /** What the audit log keeps about the filters (never a search term, which may be a number or a name). @param {Filters} f */
-const auditFilters = (f) => Object.fromEntries(Object.entries({ ...f, q: f.q ? '(search)' : '' }).filter(([, v]) => v !== '' && v !== false && v !== 'any' && v !== 'all'));
+const auditFilters = (f) => Object.fromEntries(Object.entries({ ...f, q: f.q ? '(search)' : '', custom: Array.isArray(f.custom) && f.custom.length ? `${f.custom.length} customer-field filter(s)` : '' }).filter(([, v]) => v !== '' && v !== false && v !== 'any' && v !== 'all'));
 
 /** Leads page list: matching leads (first 500 shown) and the total. @param {Staff} staff @param {any} body */
 async function search(staff, body = {}) {
@@ -266,7 +274,9 @@ async function search(staff, body = {}) {
   const f = cleanFilters(body.filters || {});
   const r = await matching(staff, f, LIST_FIELDS, MAX_EXPORT);
   if ('error' in r) return r;
-  return { total: r.rows.length, leads: r.rows.slice(0, 500), capped: r.rows.length >= MAX_EXPORT };
+  // "Imported customer · <tag>" badge (D3).
+  const leads = await require('./leadImport.cjs').withImportNames(requireBusinessId(staff.businessId), r.rows.slice(0, 500));
+  return { total: r.rows.length, leads, capped: r.rows.length >= MAX_EXPORT };
 }
 
 // ---- CSV ------------------------------------------------------------------------------------
@@ -308,7 +318,12 @@ async function exportCsv(staff, body = {}) {
   const biz = requireBusinessId(staff.businessId);
   const f = cleanFilters(body.filters || {});
   const cols = (Array.isArray(body.columns) && body.columns.length ? body.columns : DEFAULT_COLUMNS).filter((/** @type {string} */ c) => c in COLUMNS);
-  if (!cols.length) return { error: 'Choose at least one column.' };
+  // Customer fields (D4): normal ones on request; private ones only when the Business Admin ticks "Include private fields".
+  const withCustom = body.customFields === true || body.includePrivate === true;
+  if (body.includePrivate === true && staff.role !== 'owner') return { error: 'Only the Business Admin can export private customer fields.', status: 403 };
+  const cfm = require('./customFields.cjs');
+  const customCols = withCustom ? (await cfm.listFor(biz, { fresh: true })).filter(x => !x.hidden && (!x.private || body.includePrivate === true)) : [];
+  if (!cols.length && !customCols.length) return { error: 'Choose at least one column.' };
   const bySelection = Array.isArray(body.phones) && body.phones.length > 0;
   const got = bySelection ? await selected(biz, body.phones, LIST_FIELDS) : await matching(staff, f, LIST_FIELDS, MAX_EXPORT);
   if ('error' in got) return got;
@@ -322,9 +337,25 @@ async function exportCsv(staff, body = {}) {
       if (r.ok && Array.isArray(r.data)) for (const n of r.data) notes.set(n.phone, (notes.get(n.phone) || 0) + 1);
     }
   }
+  /** @type {Map<string, Record<string, unknown>>} */
+  const customOf = new Map();
+  if (customCols.length) {
+    const phones = rows.map(l => l.phone);
+    for (let i = 0; i < phones.length; i += CHUNK) {
+      const r = await dbRequest(`whatsapp_leads?business_id=eq.${biz}&phone=in.(${phones.slice(i, i + CHUNK).join(',')})&select=phone,custom`);
+      if (!r.ok) return { error: 'Could not read the customer fields. Has the customer import SQL (20261142) been run?' };
+      for (const x of Array.isArray(r.data) ? r.data : []) customOf.set(String(x.phone), x.custom || {});
+    }
+  }
+  const shownValue = (/** @type {any} */ fld, /** @type {unknown} */ v) => (v === undefined || v === null ? '' : fld.type === 'yesno' ? (v ? 'yes' : 'no') : v);
   const statuses = await require('./leadStatuses.cjs').listFor(biz);
-  const csv = toCsv(cols.map((/** @type {string} */ c) => COLUMNS[c].label), rows.map(l => cols.map((/** @type {string} */ c) => COLUMNS[c].get(l, { statuses, notes }))));
-  await audit(staff, 'leads.exported', { count: rows.length, selection: bySelection, ...(bySelection ? {} : { filters: auditFilters(f) }), columns: cols });
+  const header = [...cols.map((/** @type {string} */ c) => COLUMNS[c].label), ...customCols.map(x => (cols.some((/** @type {string} */ c) => COLUMNS[c].label === x.label) ? `${x.label} (field)` : x.label))];
+  const csv = toCsv(header, rows.map(l => [
+    ...cols.map((/** @type {string} */ c) => COLUMNS[c].get(l, { statuses, notes })),
+    ...customCols.map(x => shownValue(x, customOf.get(String(l.phone))?.[x.key])),
+  ]));
+  // Audited without the data: counts, columns, and how many customer / private fields went out.
+  await audit(staff, 'leads.exported', { count: rows.length, selection: bySelection, ...(bySelection ? {} : { filters: auditFilters(f) }), columns: cols, customFields: customCols.length, privateFields: customCols.filter(x => x.private).length });
   return { csv, count: rows.length };
 }
 
@@ -370,6 +401,9 @@ async function purgeLeads(bizId, phones) {
     await dbRequest(`queries?business_id=eq.${biz}&contact_phone=in.(${list})`, { method: 'PATCH', prefer: 'return=minimal', body: { contact_phone: null } });
     const del = await dbRequest(`whatsapp_leads?business_id=eq.${biz}&phone=in.(${list})`, { method: 'DELETE', prefer: 'return=minimal' });
     if (!del.ok) return { error: 'Some leads could not be deleted. Try again.', deleted: i };
+    // The activity log keeps what happened but forgets whom it was about (shown as "a deleted customer"). Before SQL
+    // 20261144 the column does not exist and this fails harmlessly.
+    await dbRequest(`audit_log?business_id=eq.${biz}&subject_phone=in.(${list})`, { method: 'PATCH', prefer: 'return=minimal', body: { subject_phone: null } });
   }
   return { deleted: list0.length };
 }

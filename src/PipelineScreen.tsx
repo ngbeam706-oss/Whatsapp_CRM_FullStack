@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { RotateCw, Hand, Kanban, Lock, UserPlus } from 'lucide-react';
 import AddLeadModal from './AddLeadModal';
-import { ReturnedBadge, RenameButton } from './leadNames';
+import { ImportedBadge, ReturnedBadge, RenameButton } from './leadNames';
+import { showCustomValue, type CustomFieldType } from './importUtils';
 import { useRenameLead } from './leadNameUtils';
 import { api, btnSecondary } from './broadcastUtils';
 import { LoadError, SkeletonBoard, EmptyState } from './ui';
@@ -12,7 +13,7 @@ import { useLeadStatuses, statusLook, type LeadStatus, type StatusType } from '.
 import type { Contact, Me, ShowToast, TeamResponse } from './types';
 
 /** GET /api/pipeline: contacts grouped by the business's own statuses (server/inbox.cjs pipeline). */
-interface PipelineResponse { stages?: string[]; statuses?: LeadStatus[]; columns: Record<string, Contact[]> }
+interface PipelineResponse { stages?: string[]; statuses?: LeadStatus[]; columns: Record<string, Contact[]>; cards?: Record<string, Array<{ label: string; type: CustomFieldType; value: string | number | boolean }>> }
 
 interface Props {
   onOpenChat: (phone: string) => void;
@@ -136,11 +137,16 @@ export default function PipelineScreen({ onOpenChat, showToast }: Props) {
                             <div className="min-w-0 flex-1">
                               <div className="text-xs font-semibold text-slate-800 truncate">{displayName(c)}</div>
                               <ReturnedBadge contact={c} />
+                              <ImportedBadge contact={c} />
                               <div className="text-xs text-slate-400">{shortTime(c.last_contacted_at)}{c.source ? ` · ${c.source}` : ''}</div>
                             </div>
                             {(c.unread_count ?? 0) > 0 && <span className="min-w-[16px] h-4 px-1 rounded-full bg-wa-green text-white text-2xs font-bold flex items-center justify-center">{c.unread_count}</span>}
                           </div>
                           <div className="text-xs text-slate-500 mt-1.5 line-clamp-2">{c.last_message}</div>
+                          {/* Up to 2 customer fields (Settings -> Customer fields, "Show on Pipeline card"). */}
+                          {(data.cards?.[c.phone] || []).map(x => (
+                            <div key={x.label} className="text-xs text-slate-600 truncate" data-testid="card-field"><span className="text-slate-400">{x.label}:</span> {showCustomValue(x)}</div>
+                          ))}
                         </button>
                         <div className="flex items-center gap-1.5 mt-2">
                           {(c.tags || []).slice(0, 2).map(t => <span key={t} className="text-2xs bg-slate-100 text-slate-600 rounded-full px-1.5">{t}</span>)}

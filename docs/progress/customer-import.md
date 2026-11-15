@@ -1,6 +1,6 @@
 # Customer data import + custom fields
 
-Status: **D1 + D2 LIVE 2026-11-15** (deploy 6af986bf, commit aa8f26b; SQL `20261142_customer_import.sql` run and checked). D3 / D4 later.
+Status: **D1 + D2 LIVE 2026-11-15** (deploy 6af986bf, commit aa8f26b; SQL `20261142_customer_import.sql` run and checked). **D3 + D4 built 2026-11-15, not deployed**: SQL `20261143_customer_import_d3d4.sql` to run first.
 
 ## Done (D1 + D2, 2026-11-15)
 - **SQL `20261142_customer_import.sql`** (safe to re-run, server-only tables):
@@ -75,12 +75,82 @@ Status: **D1 + D2 LIVE 2026-11-15** (deploy 6af986bf, commit aa8f26b; SQL `20261
 - SQL `20261142` gained: `lead_import_changes.after`, `lead_imports.batch_started_at` / `changes_pruned_at`, the two functions
   (service role only), and `import` in the status-history sources. Still safe to re-run; still not run.
 
+## Done (D3 + D4, built 2026-11-15, not deployed, not committed)
+SQL to run first: **`supabase/migrations/20261143_customer_import_d3d4.sql`** (safe to re-run, server-only):
+`lead_custom_fields.show_on_card`, `lead_assignment_settings.import_owner_first`, `whatsapp_leads.import_note_at`.
+
+**D3: matching when people write in**
+- Badge **"Imported customer · <tag or file name>"** (`ImportedBadge` in `src/leadNames.tsx`) in the Inbox list row, the chat
+  header, the Pipeline card and the Leads page. The server adds `import_name` (`withImportNames` in `server/leadImport.cjs`; reads
+  only this business's imports, so another business's import name can never show).
+- Timeline note **"First message after import (<tag>)"**, once (`onFirstMessage`, called from `server/webhook.cjs`; claimed with
+  `import_note_at`). No customer data in alerts (unchanged).
+- **Existing customers vs new people** (existing = `imported_at` before the ad chat's start, `isExistingCustomer` in
+  `server/adsFunnel.cjs`): per campaign / ad set / ad and in the totals of the Ads Funnel (`existing`, `newPeople`,
+  `existingShare`), a KPI tile and two table columns in `src/AdsFunnel.tsx`, the funnel CSV (3 columns), the Funnel summary card on
+  Analytics, and Analytics KPIs (`importSplit`: ad chats existing / new, people imported in the period).
+- **Option** in Settings → Lead assignment: "imported customers go to the person named in their import" (off by default). On: on
+  the first message, that person keeps the chat if `canTake` says they can (available, on shift, in the team, under the cap);
+  otherwise the chat is unassigned and the usual assignment runs right after (a note says why).
+
+**D4: using the data**
+- **Filters by customer fields** (`cleanCustomFilters` / `customFilterParts` / `filterPartsFor` in `server/customFields.cjs`, used
+  by `server/leadsTools.cjs` filterParts, the Inbox and broadcast audiences): number / amount ranges, date ranges with quick picks
+  (overdue, today, this week, next 7 / 30 days, India time), choice (one of), yes/no, text contains; AND-ed; at most 10.
+  - Numbers compare as jsonb numbers (`custom->key=gte.750`); a lower bound (−10^15) is always added, so text never counts as a
+    number. Dates compare as `YYYY-MM-DD` text. Choice (one value) and yes/no use `custom=cs.{…}` (the GIN index).
+  - Private fields: only managers and the Business Admin; the server answers 403 to agents. Unknown fields / bad values: 400.
+  - UI `src/customFilters.tsx` (+ `src/customFilterUtils.ts`): Leads page (POST body), Inbox filter panel, broadcast audience step.
+- **Broadcast audiences** by those filters with the live count (`/api/audience/preview`); STOP, plan limits, send window and
+  templates-only as before; `markContacted` already makes imported people "contacted".
+- **Export**: "Customer fields" (one column each, normal fields) and "Include private fields" (Business Admin only; managers get
+  403 from the server). Formula guard and BOM kept. Audit has `customFields` / `privateFields` counts, never values.
+- **Pipeline cards**: "Card" toggle on Settings → Customer fields (at most 2); `cards` in `/api/pipeline` (`cardValues`); private
+  card fields only for managers and the Business Admin.
+- **Tests**: `tests/customerImport.test.cjs` Part 5 (9 more: filter building incl. numeric / date / GIN parts and private refusal,
+  Leads + Inbox filters incl. agents refused, audience counts, export by role + audit, Pipeline cards by role, badges + tenancy of
+  import names, first-message note + owner option, existing vs new in the funnel / CSV / Analytics, SQL 20261143 + Postgres jsonb
+  comparison on PGlite). e2e: badge on an imported chat, a Leads custom-field filter, a broadcast audience count, export by role.
+
+## Decisions (D3 + D4)
+- **"Imported customers go to the person named in their import"**: the import already assigns that person (D2). So "off" keeps
+  today's behaviour (the named person keeps the chat even when away); "on" adds the availability check on the first message, with
+  normal assignment as the fallback.
+- ~~Inbox filters travel in the list address~~ Changed in the second review: Inbox field filters go in a POST body
+  (`POST /api/inbox/list`). The Inbox panel still offers thresholds, dates, choices and yes/no only (no "text contains");
+  the Leads page has all types.
+- **Analytics "New leads"** no longer counts people added by an import (a 5,000-row import is not 5,000 new leads); they show as
+  "imported in N days" in the new "Ad chats: existing vs new" tile.
+- A badge shows for anyone created by an import (`import_id`), also after they have chatted; people an import only updated get no badge.
+- The first-message note is written on the first INBOUND message after the import (also when a broadcast reached them first).
+- Test helper: `tests/customerImport.test.cjs` requests use `agent: false`. Under the full parallel `npm test` run a kept-alive
+  socket the server had just closed gave `ECONNRESET` (the same flake as "N4 bot" in `tests/multiNumber.test.cjs`, which likely has
+  the same cause and the same fix).
+
+## Second review of D3 + D4 (2026-11-15; tests in `tests/customerImport.test.cjs` Part 6 + e2e)
+1. **The Inbox can't get stuck on a stored field filter.** Only filters on fields the person can filter by NOW are sent and kept
+   (a field made private or hidden since is dropped from the stored filters); "Clear field filters" on the panel; a 403 / 400 from
+   the list with field filters clears them once, shows a note and the normal list comes back. The Leads page drops stored filters
+   on fields that became hidden (or private) the same way.
+2. **Hidden fields can't be used as filters by anyone** (Leads, Inbox, audiences; 400 "… is hidden"). Chosen over "agents only":
+   a hidden field is shown nowhere, so a filter on it would narrow lists without anyone seeing why.
+3. **Import-owner switch with lead assignment Off:** the named person keeps the chat even when away (releasing it would leave it
+   with nobody, since `assignIfDue` does nothing when Off); the note says "…it stays with them because automatic lead assignment is
+   off". With assignment on, the note now says "it goes to the next person by lead assignment".
+4. **Inbox field filters travel in a POST body** (`POST /api/inbox/list`, same answer as `GET /api/inbox`); the GET ignores `custom=`.
+   The plain Inbox list (no field filters) stays a GET, unchanged. The Inbox panel still has no "text contains" filter.
+- SQL `20261143` did not change.
+
 ## Next
 - [x] SQL 20261142 run, deployed 2026-11-15 (deploy 6af986bf).
 - [x] CLAUDE.md: key files row + latest migration `20261142` (done in the cross-check, 2026-11-15).
 - [x] Cross-check fix: deleting a lead permanently (Leads page) now also removes its `lead_import_changes` rows
       (old values kept for Undo are personal data); test in `tests/leadsTools.test.cjs`.
-- [ ] D3 (matching badge, existing vs new in the Ads Funnel), D4 (filters, audiences, export with custom fields).
+- [x] D3 + D4 built (above).
+- [ ] User runs SQL `20261143_customer_import_d3d4.sql`, then deploy (ask first).
+- [ ] CLAUDE.md: latest migration `20261143`; key files: `customFields.cjs` (filters, cards), `leadImport.cjs` (badge names,
+      first message), `src/customFilters.tsx` (left to the main session).
+- [ ] D5 (optional): possible-match suggestions, Google Sheet sync.
 
 **User's decisions (2026-11-15):**
 1. Plan limits in section 4: yes, as written.

@@ -765,7 +765,72 @@ async function markContacted(biz, phone) {
   } catch { /* best effort */ }
 }
 
+/**
+ * The "Imported customer · <tag or file name>" badge (D3): adds import_name to every lead created by an import. One
+ * read of this business's imports. Leads without import_id are returned as they are.
+ * @template {Row} T @param {string} biz @param {T[]} leads @returns {Promise<T[]>}
+ */
+async function withImportNames(biz, leads) {
+  const ids = [...new Set(leads.map(l => l.import_id).filter(id => /^[0-9a-f-]{36}$/i.test(String(id || ''))))];
+  if (!ids.length) return leads;
+  /** @type {Map<string, string>} */
+  const names = new Map();
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const r = await dbRequest(`lead_imports?business_id=eq.${requireBusinessId(biz)}&id=in.(${ids.slice(i, i + CHUNK).join(',')})&select=id,file_name,options`);
+    for (const x of r.ok && Array.isArray(r.data) ? r.data : []) names.set(String(x.id), String(x.options?.tag || x.file_name || ''));
+  }
+  return leads.map(l => (l.import_id ? { ...l, import_name: names.get(String(l.import_id)) || 'an import' } : l));
+}
+
+/**
+ * D3: an imported person writes for the first time (before = the lead as it was before this message).
+ *   - a timeline note "First message after import", once (import_note_at, SQL 20261143; without it: only when this is
+ *     their first message ever, which also happens once)
+ *   - "imported customers go to the person named in their import" (Settings -> Lead assignment, off by default): that
+ *     person keeps the chat if they can take it (available, on shift, under the cap); otherwise it is unassigned here
+ *     and normal assignment runs next (webhook: assignIfDue). Off: as before, the import's owner keeps it.
+ * No customer data leaves the server (no alert text). Never throws.
+ * @param {string} biz @param {string} phone @param {Row | null} before @param {{ numberId?: string | null }} [o]
+ */
+async function onFirstMessage(biz, phone, before, { numberId = null } = {}) {
+  try {
+    if (!before || !before.imported_at || before.last_inbound_at) return { note: false, owner: 'none' };
+    const id = requireBusinessId(biz);
+    const base = `whatsapp_leads?business_id=eq.${id}&phone=eq.${phone}`;
+    const now = new Date().toISOString();
+    // Once per person: the first message after the import claims the note.
+    const claim = await dbRequest(`${base}&import_note_at=is.null`, { method: 'PATCH', prefer: 'return=representation', body: { import_note_at: now } });
+    const first = claim.ok ? Array.isArray(claim.data) && claim.data.length > 0 : true;
+    /** @type {string[]} */
+    const lines = [];
+    let owner = 'none';
+    const la = require('./leadAssignment.cjs');
+    if (before.assigned_to && (await la.importOwnerFirst(id))) {
+      const can = await la.canTake(id, before.assigned_to, numberId ? String(numberId) : '');
+      if (can.ok) owner = 'kept';
+      else if ((await la.assignmentMode(id)) === 'off') {
+        // Automatic assignment is off: releasing would leave the chat with nobody. It stays with the named person.
+        owner = 'kept_assignment_off';
+        lines.push(`${before.assigned_to} (named in the import) can't take it now; it stays with them because automatic lead assignment is off.`);
+      } else {
+        await dbRequest(`${base}&assigned_to=eq.${encodeURIComponent(String(before.assigned_to))}`, { method: 'PATCH', prefer: 'return=minimal', body: { assigned_to: null } });
+        owner = 'released';
+        lines.push(`${before.assigned_to} (named in the import) can't take it now: it goes to the next person by lead assignment.`);
+      }
+    }
+    if (first) {
+      const [named] = await withImportNames(id, [before]);
+      await dbRequest('lead_notes', { method: 'POST', prefer: 'return=minimal', body: { business_id: id, phone, author: 'import', body: [`First message after import${named.import_name ? ` (${named.import_name})` : ''}.`, ...lines].join(' ') } });
+    }
+    return { note: first, owner };
+  } catch (err) {
+    console.warn('[import] first message:', err instanceof Error ? err.message : err);
+    return { note: false, owner: 'none' };
+  }
+}
+
 module.exports = {
+  withImportNames, onFirstMessage,
   BATCH, MAX_COLUMNS, MAX_CELL, UNDO_DAYS, MODES,
   cleanPhone, cleanTags, cleanRow, changesFor, draftFields, countKinds, monthStart, undoSet,
   limitsFor, check, start, batch, finish, list, undo, publicImport, pruneUndo, markContacted,

@@ -13,7 +13,7 @@ const { requireBusinessId, isManagerOrOwner } = require('./tenant.cjs');
 
 /** @typedef {import('./types.cjs').Staff} Staff */
 /** @typedef {'text' | 'number' | 'amount' | 'date' | 'choice' | 'yesno'} FieldType */
-/** @typedef {{ key: string, label: string, type: FieldType, options: string[], private: boolean, hidden: boolean, sort_order: number }} Field */
+/** @typedef {{ key: string, label: string, type: FieldType, options: string[], private: boolean, hidden: boolean, sort_order: number, show_on_card?: boolean }} Field */
 /** @typedef {Record<string, string | number | boolean>} Custom */
 
 const TYPES = /** @type {FieldType[]} */ (['text', 'number', 'amount', 'date', 'choice', 'yesno']);
@@ -209,17 +209,146 @@ function aiFacts(fields, custom) {
 }
 
 // ---------------------------------------------------------------------------
+// Filters by custom fields (D4): Leads page, Inbox, broadcast audiences. AND-ed. PostgREST on the jsonb column:
+//   number / amount: custom->key=gte.N (jsonb compares numbers as numbers; strings and booleans never match a range)
+//   date: custom->>key=gte.YYYY-MM-DD (dates are saved as YYYY-MM-DD, so text order is date order)
+//   choice (one value) / yes-no: custom=cs.{"key":value} (uses the GIN index); several choices: custom->>key=in.(…)
+//   text: custom->>key=ilike.*term*
+// Private fields: managers and the Business Admin only (the server refuses them for agents).
+// ---------------------------------------------------------------------------
+const MAX_FILTERS = 10;
+/** Fields shown on a Pipeline card. */
+const MAX_CARD_FIELDS = 2;
+const DATE_PRESETS = ['overdue', 'today', 'this_week', 'next_7', 'next_30'];
+/** Lowest number a field can hold: a lower bound that also makes sure the value IS a number (jsonb orders strings below numbers). */
+const NUM_FLOOR = -1e15;
+
+/**
+ * @typedef {{ key: string, type: FieldType, min?: number, max?: number, from?: string, to?: string, preset?: string,
+ *   values?: string[], value?: boolean, contains?: string }} CustomFilter
+ */
+
+/** India date (YYYY-MM-DD), `add` days from today. @param {number} [add] @param {number} [now] */
+function istDate(add = 0, now = Date.now()) {
+  return new Date(now + 330 * 60000 + add * 86400000).toISOString().slice(0, 10);
+}
+
+/** A date preset as from / to (India days, inclusive). Pure. @param {string} preset @param {number} [now] */
+function presetRange(preset, now = Date.now()) {
+  if (preset === 'overdue') return { to: istDate(-1, now) };
+  if (preset === 'today') return { from: istDate(0, now), to: istDate(0, now) };
+  if (preset === 'next_7') return { from: istDate(0, now), to: istDate(6, now) };
+  if (preset === 'next_30') return { from: istDate(0, now), to: istDate(29, now) };
+  if (preset === 'this_week') {
+    const dow = new Date(now + 330 * 60000).getUTCDay(); // 0 = Sunday
+    const back = (dow + 6) % 7;                          // Monday starts the week
+    return { from: istDate(-back, now), to: istDate(6 - back, now) };
+  }
+  return {};
+}
+
+/**
+ * Filters from the browser checked against this business's fields. Private fields need a manager or the Business
+ * Admin; unknown fields, bad values and too many filters are refused (never silently dropped). Pure.
+ * @param {Field[]} fields @param {unknown} input @param {{ seesPrivate: boolean, allowText?: boolean }} who
+ * @returns {{ filters: CustomFilter[], error?: undefined, status?: undefined } | { error: string, status: number, filters?: undefined }}
+ */
+function cleanCustomFilters(fields, input, { seesPrivate, allowText = true }) {
+  let list = input;
+  if (typeof list === 'string') { try { list = JSON.parse(list); } catch { return { error: 'The customer-field filters are not valid.', status: 400 }; } }
+  if (list === undefined || list === null || list === '') return { filters: [] };
+  if (!Array.isArray(list)) return { error: 'The customer-field filters are not valid.', status: 400 };
+  if (list.length > MAX_FILTERS) return { error: `At most ${MAX_FILTERS} customer-field filters.`, status: 400 };
+  /** @type {CustomFilter[]} */
+  const out = [];
+  for (const raw of list) {
+    const f = fields.find(x => x.key === raw?.key);
+    if (!f) return { error: 'Unknown customer field in the filters.', status: 400 };
+    // Hidden fields are refused for everyone: they are shown nowhere, so a filter on one would narrow lists unseen.
+    if (f.hidden) return { error: `"${f.label}" is hidden, so it can't be used as a filter.`, status: 400 };
+    if (f.private && !seesPrivate) return { error: 'Only managers and the Business Admin can filter by private fields.', status: 403 };
+    const num = (/** @type {unknown} */ v) => (v === undefined || v === null || v === '' ? undefined : parseNumber(v));
+    if (f.type === 'number' || f.type === 'amount') {
+      const min = num(raw.min), max = num(raw.max);
+      if (min === null || max === null) return { error: `${f.label}: the range must be numbers.`, status: 400 };
+      if (min === undefined && max === undefined) continue;
+      out.push({ key: f.key, type: f.type, ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) });
+    } else if (f.type === 'date') {
+      const preset = DATE_PRESETS.includes(raw.preset) ? raw.preset : '';
+      const range = preset ? presetRange(preset) : { from: raw.from ? parseDate(String(raw.from)) : undefined, to: raw.to ? parseDate(String(raw.to)) : undefined };
+      if (range.from === null || range.to === null) return { error: `${f.label}: not a date.`, status: 400 };
+      if (!range.from && !range.to) continue;
+      out.push({ key: f.key, type: 'date', ...(preset ? { preset } : {}), ...(range.from ? { from: range.from } : {}), ...(range.to ? { to: range.to } : {}) });
+    } else if (f.type === 'choice') {
+      const values = (Array.isArray(raw.values) ? raw.values : raw.value !== undefined ? [raw.value] : []).map(String);
+      const ok = values.map((/** @type {string} */ v) => f.options.find(o => o.toLowerCase() === v.toLowerCase())).filter(Boolean);
+      if (ok.length !== values.length) return { error: `${f.label}: not one of its choices.`, status: 400 };
+      if (!ok.length) continue;
+      out.push({ key: f.key, type: 'choice', values: /** @type {string[]} */ ([...new Set(ok)]) });
+    } else if (f.type === 'yesno') {
+      if (raw.value !== true && raw.value !== false) continue;
+      out.push({ key: f.key, type: 'yesno', value: raw.value });
+    } else {
+      if (!allowText) return { error: 'Text filters are only on the Leads page.', status: 400 };
+      const term = String(raw.contains ?? '').replace(/[^\p{L}\p{N} @.\-_]/gu, '').trim().slice(0, 40);
+      if (!term) continue;
+      out.push({ key: f.key, type: 'text', contains: term });
+    }
+  }
+  return { filters: out };
+}
+
+/** PostgREST query params for checked filters (AND-ed; every key is a checked field key). Pure. @param {CustomFilter[]} filters */
+function customFilterParts(filters) {
+  /** @type {string[]} */
+  const parts = [];
+  const enc = encodeURIComponent;
+  for (const f of filters) {
+    if (!KEY_RE.test(f.key)) continue;
+    if (f.type === 'number' || f.type === 'amount') {
+      parts.push(`custom->${f.key}=gte.${f.min !== undefined ? f.min : NUM_FLOOR}`);
+      if (f.max !== undefined) parts.push(`custom->${f.key}=lte.${f.max}`);
+    } else if (f.type === 'date') {
+      if (f.from) parts.push(`custom->>${f.key}=gte.${f.from}`);
+      if (f.to) parts.push(`custom->>${f.key}=lte.${f.to}`);
+    } else if (f.type === 'choice' && f.values?.length) {
+      if (f.values.length === 1) parts.push(`custom=cs.${enc(JSON.stringify({ [f.key]: f.values[0] }))}`);
+      else parts.push(`custom->>${f.key}=in.(${f.values.map(v => enc(`"${v.replace(/"/g, '')}"`)).join(',')})`);
+    } else if (f.type === 'yesno') {
+      parts.push(`custom=cs.${enc(JSON.stringify({ [f.key]: !!f.value }))}`);
+    } else if (f.type === 'text' && f.contains) {
+      parts.push(`custom->>${f.key}=ilike.${enc(`*${f.contains}*`)}`);
+    }
+  }
+  return parts;
+}
+
+/**
+ * Checked PostgREST params for one business's request (loads its fields). seesPrivate: a manager or the Business Admin.
+ * @param {string} biz @param {unknown} input @param {{ seesPrivate: boolean, allowText?: boolean }} who
+ */
+async function filterPartsFor(biz, input, who) {
+  if (input === undefined || input === null || input === '' || (Array.isArray(input) && !input.length)) return { parts: [] };
+  const c = cleanCustomFilters(await listFor(biz), input, who);
+  if (c.error !== undefined) return { error: c.error, status: c.status };
+  return { parts: customFilterParts(c.filters) };
+}
+
+// ---------------------------------------------------------------------------
 // Database
 // ---------------------------------------------------------------------------
 /** @param {any} r @returns {Field} */
-const toField = (r) => ({ key: r.key, label: r.label, type: r.type, options: Array.isArray(r.options) ? r.options.map(String) : [], private: !!r.private, hidden: !!r.hidden, sort_order: Number(r.sort_order) || 0 });
+const toField = (r) => ({ key: r.key, label: r.label, type: r.type, options: Array.isArray(r.options) ? r.options.map(String) : [], private: !!r.private, hidden: !!r.hidden, sort_order: Number(r.sort_order) || 0, show_on_card: !!r.show_on_card });
 
 /** This business's fields in order (cached a minute). [] before the SQL. @param {string} biz @param {{ fresh?: boolean }} [o] @returns {Promise<Field[]>} */
 async function listFor(biz, { fresh = false } = {}) {
   const id = requireBusinessId(biz);
   const hit = cache.get(id);
   if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.fields;
-  const r = await dbRequest(`lead_custom_fields?business_id=eq.${id}&select=key,label,type,options,private,hidden,sort_order&order=sort_order.asc,created_at.asc`);
+  const path = (/** @type {string} */ cols) => `lead_custom_fields?business_id=eq.${id}&select=${cols}&order=sort_order.asc,created_at.asc`;
+  // show_on_card (SQL 20261143) when the column exists.
+  let r = await dbRequest(path('key,label,type,options,private,hidden,sort_order,show_on_card'));
+  if (!r.ok) r = await dbRequest(path('key,label,type,options,private,hidden,sort_order'));
   const fields = r.ok && Array.isArray(r.data) ? r.data.map(toField) : [];
   cache.set(id, { at: Date.now(), fields });
   return fields;
@@ -259,6 +388,7 @@ function cleanFieldInput(body, isNew) {
   if ('options' in body) out.options = cleanOptions(body.options);
   if ('private' in body) out.private = !!body.private;
   if ('hidden' in body) out.hidden = !!body.hidden;
+  if ('showOnCard' in body) out.show_on_card = !!body.showOnCard;
   return { fields: out };
 }
 
@@ -317,6 +447,7 @@ async function update(staff, key, body = {}) {
   if (changes.label && current.some(f => f.key !== key && f.label.toLowerCase() === String(changes.label).toLowerCase())) return { error: `There is already a field called "${changes.label}".` };
   if (before.type === 'choice' && 'options' in changes && !changes.options.length) return { error: 'A choice field needs at least one choice.' };
   if (!Object.keys(changes).length) return { fields: current };
+  if (changes.show_on_card && !before.show_on_card && current.filter(f => f.show_on_card).length >= MAX_CARD_FIELDS) return { error: `At most ${MAX_CARD_FIELDS} fields can show on Pipeline cards. Turn one off first.` };
   const r = await dbRequest(`lead_custom_fields?business_id=eq.${biz}&key=eq.${key}`, { method: 'PATCH', prefer: 'return=minimal', body: { ...changes, updated_at: new Date().toISOString() } });
   if (!r.ok) return { error: 'Could not save the field.' };
   cache.delete(biz);
@@ -404,6 +535,29 @@ async function saveDetails(staff, body = {}) {
   return { fields: detailsFor(fields, custom, staff.role), canEdit: true };
 }
 
+/**
+ * The Pipeline card lines for these people: the fields marked "show on card" (at most 2) with a value. Private fields
+ * only for managers and the Business Admin. { phone: [{ label, type, value }] }. [] before the SQL.
+ * @param {string} biz @param {string[]} phones @param {string} role
+ */
+async function cardValues(biz, phones, role) {
+  const id = requireBusinessId(biz);
+  const seesPrivate = isManagerOrOwner(role);
+  const shown = (await listFor(id)).filter(f => f.show_on_card && !f.hidden && (!f.private || seesPrivate)).slice(0, MAX_CARD_FIELDS);
+  /** @type {Record<string, Array<{ label: string, type: FieldType, value: string | number | boolean }>>} */
+  const out = {};
+  if (!shown.length || !phones.length) return out;
+  for (let i = 0; i < phones.length; i += 100) {
+    const r = await dbRequest(`whatsapp_leads?business_id=eq.${id}&phone=in.(${phones.slice(i, i + 100).join(',')})&select=phone,custom`);
+    if (!r.ok) return out;
+    for (const l of Array.isArray(r.data) ? r.data : []) {
+      const lines = shown.map(f => ({ label: f.label, type: f.type, value: l.custom?.[f.key] })).filter(x => x.value !== undefined && x.value !== null && x.value !== '');
+      if (lines.length) out[String(l.phone)] = lines;
+    }
+  }
+  return out;
+}
+
 /** For the AI: normal fields of one customer as short lines ('' when none, or before the SQL). @param {string} biz @param {string} phone */
 async function aiFactsFor(biz, phone) {
   try {
@@ -418,5 +572,6 @@ module.exports = {
   TYPES, KEY_RE, MAX_VALUE, MAX_CUSTOM_BYTES,
   keyFromLabel, looksSensitive, cleanOptions, parseDate, parseNumber, cleanValue, cleanValues, mergeCustom, customBytes,
   detailsFor, aiFacts, aiFactsFor, importColumnsReady, _resetColumns,
+  cleanCustomFilters, customFilterParts, filterPartsFor, presetRange, MAX_FILTERS, MAX_CARD_FIELDS, cardValues,
   listFor, clearCache, view, add, addMany, update, reorder, details, saveDetails,
 };

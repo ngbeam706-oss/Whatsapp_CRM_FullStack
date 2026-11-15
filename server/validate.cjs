@@ -162,8 +162,9 @@ const body = {
   leadStatus: z.looseObject({ label: text(60).optional(), hint: z.union([text(200), z.null()]).optional(), color: text(20).optional(), type: text(20).optional(), active: z.boolean().optional() }),
   leadStatusOrder: z.looseObject({ keys: z.array(text(40)).max(50) }),
   // Customer fields + import (server/customFields.cjs, server/leadImport.cjs re-check every value).
-  customField: z.looseObject({ label: text(60).optional(), type: text(20).optional(), options: z.array(text(60)).max(50).optional(), private: z.boolean().optional(), hidden: z.boolean().optional() }),
+  customField: z.looseObject({ label: text(60).optional(), type: text(20).optional(), options: z.array(text(60)).max(50).optional(), private: z.boolean().optional(), hidden: z.boolean().optional(), showOnCard: z.boolean().optional() }),
   customFieldOrder: z.looseObject({ keys: z.array(text(40)).max(200) }),
+  inboxList: z.looseObject({ filter: text(20).optional(), stage: text(40).optional(), q: text(60).optional(), number: text(30).optional(), assignee: text(254).optional(), custom: z.array(z.looseObject({ key: text(40) })).max(10).optional() }),
   customerDetails: z.looseObject({ phone: textOrNumber(30) }),
   customerDetailsSave: z.looseObject({ phone: textOrNumber(30), values: z.record(z.string(), z.unknown()) }),
   importCheck: z.looseObject({ rows: z.array(z.looseObject({})).min(1).max(500), newFields: z.array(z.looseObject({})).max(60).optional() }),

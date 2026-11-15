@@ -139,8 +139,40 @@ function seed() {
 }
 
 const SKIP = new Set(['select', 'order', 'limit', 'offset', 'on_conflict']);
+/** jsonb ordering, as Postgres does it: object > array > boolean > number > string > null. */
+function jsonbCmp(x, y) {
+  const rank = (v) => (v === null || v === undefined ? 0 : typeof v === 'string' ? 1 : typeof v === 'number' ? 2 : typeof v === 'boolean' ? 3 : Array.isArray(v) ? 4 : 5);
+  const rx = rank(x), ry = rank(y);
+  if (rx !== ry) return rx - ry;
+  if (rx === 2 || rx === 3) return Number(x) - Number(y);
+  return String(x) < String(y) ? -1 : String(x) > String(y) ? 1 : 0;
+}
+/** custom->key (jsonb) / custom->>key (text) conditions, the way PostgREST turns them into SQL. */
+function pathCond(r, col, op, key, v) {
+  const val = (r[col] || {})[key];
+  if (val === undefined || val === null) return false;
+  const i = v.indexOf('.');
+  const how = v.slice(0, i), arg = decodeURIComponent(v.slice(i + 1));
+  if (op === '->') {
+    const c = jsonbCmp(val, JSON.parse(arg));
+    return how === 'gte' ? c >= 0 : how === 'lte' ? c <= 0 : how === 'eq' ? c === 0 : how === 'gt' ? c > 0 : how === 'lt' ? c < 0 : false;
+  }
+  const text = typeof val === 'string' ? val : JSON.stringify(val);
+  if (how === 'gte') return text >= arg;
+  if (how === 'lte') return text <= arg;
+  if (how === 'eq') return text === arg;
+  if (how === 'in') return arg.slice(1, -1).split(',').map(x => x.replace(/^"|"$/g, '')).includes(text);
+  if (how === 'ilike') return text.toLowerCase().includes(arg.replace(/^\*|\*$/g, '').toLowerCase());
+  return false;
+}
 /** One PostgREST condition ("col=op.value" or "col.op.value" inside or=()). */
 function cond(r, k, v) {
+  const path = k.match(/^(\w+)(->>|->)(\w+)$/);
+  if (path) return pathCond(r, path[1], path[2], path[3], v);
+  if (v.startsWith('cs.{') && r[k] && typeof r[k] === 'object' && !Array.isArray(r[k])) {
+    const want = JSON.parse(decodeURIComponent(v.slice(3)));
+    return Object.entries(want).every(([a, b]) => r[k][a] === b);
+  }
   const raw = r[k];
   const val = raw === undefined || raw === null ? null : Array.isArray(raw) ? raw : String(raw);
   if (v.startsWith('eq.')) return val === decodeURIComponent(v.slice(3));
@@ -240,7 +272,8 @@ beforeEach(seed);
 function request(method, path, token, body) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
-    const req = http.request(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}) } },
+    // agent: false = a fresh connection each time (a kept-alive socket the server just closed gives ECONNRESET under load).
+    const req = http.request(`${base}${path}`, { method, agent: false, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}) } },
       (res) => { let t = ''; res.setEncoding('utf8'); res.on('data', c => { t += c; }); res.on('end', () => { let j = null; try { j = JSON.parse(t); } catch { /* text */ } resolve({ status: res.statusCode, text: t, json: j }); }); });
     req.on('error', reject);
     if (data) req.write(data);
@@ -672,4 +705,261 @@ test('SQL 20261142: server-only tables, safe to re-run, plan limits, the custom 
   await assert.rejects(asUser(pg, user, () => pg.query('select * from public.lead_import_claim_batch($1, $2, 1)', [biz, imp])), /permission denied/);
   await pg.query("insert into public.lead_status_history (business_id, phone, to_key, to_type, source) values ($1, '919000000001', 'new', 'new', 'import')", [biz]);
   await assert.rejects(pg.query("insert into public.lead_imports (business_id, file_name, file_rows, row_from, row_to, consent, created_by) values ($1, 'f.csv', 1, 1, 1, false, 'm@x.test')", [biz]), /check/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Part 5: D3 (matching, existing vs new, import owner) + D4 (filters, audiences, export, Pipeline cards)
+// ---------------------------------------------------------------------------------------------
+/** More fields for SUN: loan type (choice), EMI date, KYC (yes/no). */
+function moreFields() {
+  db.lead_custom_fields.push(
+    { business_id: SUN, key: 'loan_type', label: 'Loan type', type: 'choice', options: ['Home', 'Car'], private: false, hidden: false, sort_order: 3, created_at: NOW() },
+    { business_id: SUN, key: 'emi', label: 'EMI date', type: 'date', options: [], private: false, hidden: false, sort_order: 4, created_at: NOW() },
+    { business_id: SUN, key: 'kyc', label: 'KYC done', type: 'yesno', options: [], private: false, hidden: false, sort_order: 5, created_at: NOW() },
+  );
+  const lead = (phone, custom) => db.whatsapp_leads.push({ business_id: SUN, phone, name: phone, stage: 'new', source: 'Imported', tags: [], custom, opted_out: false, last_contacted_at: NOW(), created_at: NOW() });
+  lead('919100000001', { cibil: 1000, branch: 'Guntur', loan_type: 'Home', emi: '2026-01-05', kyc: true });
+  lead('919100000002', { cibil: 760, branch: 'Vizag', loan_type: 'Car', emi: '2099-01-05', kyc: false });
+  lead('919100000003', { cibil: 'high', branch: 'Guntur East' }); // a string never counts as a number
+  db.plans[0].max_custom_fields = 20;
+  cf.clearCache(); limits.clearCache();
+}
+
+test('D4 filters: checked against the fields; private ones refused for agents; parts use jsonb numbers, dates, the GIN index', () => {
+  const F = [...FIELDS, { key: 'loan_type', label: 'Loan type', type: 'choice', options: ['Home', 'Car'], private: false, hidden: false, sort_order: 4 },
+    { key: 'emi', label: 'EMI date', type: 'date', options: [], private: false, hidden: false, sort_order: 5 }, { key: 'kyc', label: 'KYC', type: 'yesno', options: [], private: false, hidden: false, sort_order: 6 }];
+  assert.equal(cf.cleanCustomFilters(F, [{ key: 'cibil', min: 750 }], { seesPrivate: false }).status, 403, 'private: managers only');
+  assert.ok(cf.cleanCustomFilters(F, [{ key: 'cibil', min: 750 }], { seesPrivate: true }).filters);
+  assert.equal(cf.cleanCustomFilters(F, [{ key: 'nope' }], { seesPrivate: true }).status, 400);
+  assert.equal(cf.cleanCustomFilters(F, [{ key: 'cibil', min: 'lots' }], { seesPrivate: true }).status, 400);
+  assert.equal(cf.cleanCustomFilters(F, [{ key: 'loan_type', values: ['Boat'] }], { seesPrivate: true }).status, 400);
+  assert.equal(cf.cleanCustomFilters(F, [{ key: 'branch', contains: 'gun' }], { seesPrivate: false, allowText: false }).status, 400, 'no free text in the Inbox address');
+  assert.equal(cf.cleanCustomFilters(F, Array.from({ length: 11 }, () => ({ key: 'branch', contains: 'x' })), { seesPrivate: true }).status, 400);
+  assert.equal(cf.cleanCustomFilters(F, 'not json', { seesPrivate: true }).status, 400);
+  const c = cf.cleanCustomFilters(F, [
+    { key: 'cibil', min: '750' }, { key: 'cibil', max: '900' }, { key: 'emi', from: '05/01/2026', to: '2026-02-01' },
+    { key: 'loan_type', values: ['home'] }, { key: 'kyc', value: true }, { key: 'branch', contains: 'Gun*(' },
+  ], { seesPrivate: true });
+  assert.deepEqual(cf.customFilterParts(c.filters), [
+    'custom->cibil=gte.750',
+    'custom->cibil=gte.-1000000000000000', 'custom->cibil=lte.900', // "at most" still needs a number
+    'custom->>emi=gte.2026-01-05', 'custom->>emi=lte.2026-02-01',
+    `custom=cs.${encodeURIComponent('{"loan_type":"Home"}')}`,
+    `custom=cs.${encodeURIComponent('{"kyc":true}')}`,
+    `custom->>branch=ilike.${encodeURIComponent('*Gun*')}`,
+  ]);
+  // Date presets (India days): Saturday 2026-11-14.
+  const sat = Date.parse('2026-11-14T06:00:00Z');
+  assert.deepEqual(cf.presetRange('this_week', sat), { from: '2026-11-09', to: '2026-11-15' });
+  assert.deepEqual(cf.presetRange('next_7', sat), { from: '2026-11-14', to: '2026-11-20' });
+  assert.deepEqual(cf.presetRange('overdue', sat), { to: '2026-11-13' });
+});
+
+test('D4 Leads + Inbox: custom-field filters work on numbers (not text), dates, choices, yes/no; agents never filter by private fields', async () => {
+  moreFields();
+  const search = (filters, token = 'ci-manager') => request('POST', '/api/leads/search', token, { filters });
+  const phones = (r) => r.json.leads.map(l => l.phone).sort();
+  const cibil = await search({ custom: [{ key: 'cibil', min: 750 }] });
+  assert.equal(cibil.status, 200, cibil.text);
+  assert.deepEqual(phones(cibil), ['919100000001', '919100000002'], '1000 >= 750 (a text compare would say no); "high" is not a number');
+  assert.deepEqual(phones(await search({ custom: [{ key: 'cibil', max: 800 }] })), ['919000000001', '919100000002'], '742 and 760; not "high"');
+  assert.deepEqual(phones(await search({ custom: [{ key: 'loan_type', values: ['Car'] }, { key: 'kyc', value: false }] })), ['919100000002'], 'AND-ed');
+  assert.deepEqual(phones(await search({ custom: [{ key: 'emi', preset: 'overdue' }] })), ['919100000001']);
+  assert.deepEqual(phones(await search({ custom: [{ key: 'branch', contains: 'guntur' }] })), ['919000000001', '919100000001', '919100000003']);
+  // Inbox: agents filter by normal fields only; private ones are refused by the server; no free text.
+  // (POST /api/inbox/list: customer-field filters travel in the body, never the address.)
+  const inbox = (custom, token) => request('POST', '/api/inbox/list', token, { filter: 'all', custom });
+  // The address never carries them: a GET with custom= is answered unfiltered (and never refused, so nothing leaks either way).
+  const viaGet = await request('GET', `/api/inbox?custom=${encodeURIComponent(JSON.stringify([{ key: 'cibil', min: 750 }]))}`, 'ci-agent');
+  assert.equal(viaGet.status, 200);
+  assert.ok(viaGet.json.conversations.length > 1, 'custom= in the address is ignored');
+  const kyc = await inbox([{ key: 'kyc', value: true }], 'ci-agent');
+  assert.equal(kyc.status, 200, kyc.text);
+  assert.deepEqual(kyc.json.conversations.map(c => c.phone), ['919100000001']);
+  const priv = await inbox([{ key: 'cibil', min: 750 }], 'ci-agent');
+  assert.equal(priv.status, 403);
+  assert.match(priv.json.error, /private/);
+  assert.equal((await inbox([{ key: 'cibil', min: 750 }], 'ci-manager')).status, 200, 'managers may');
+  assert.equal((await inbox([{ key: 'branch', contains: 'g' }], 'ci-manager')).status, 400);
+  // Another business's fields can't be used.
+  assert.equal((await request('POST', '/api/leads/search', 'ci-lotus', { filters: { custom: [{ key: 'cibil', min: 1 }] } })).status, 400);
+});
+
+test('D4 broadcast audiences: count by customer fields, STOP excluded, private fields fine for managers', async () => {
+  moreFields();
+  db.whatsapp_leads.find(l => l.phone === '919100000002').opted_out = true;
+  const preview = (custom) => request('POST', '/api/audience/preview', 'ci-manager', { segment: { mode: 'filter', custom } });
+  const r = await preview([{ key: 'cibil', min: 750 }]);
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual([r.json.count, r.json.optedOutExcluded], [1, 1]);
+  assert.equal((await preview([{ key: 'nope', min: 1 }])).status, 400);
+  assert.equal((await request('POST', '/api/audience/preview', 'ci-agent', { segment: { mode: 'filter' } })).status, 403);
+});
+
+test('D4 export: customer fields as columns; private ones only for the Business Admin; audited without the data', async () => {
+  const csvOf = (r) => r.text.replace(/^﻿/, '').trim().split('\r\n');
+  const m = await request('POST', '/api/leads/export', 'ci-manager', { phones: ['919000000001'], columns: ['phone'], customFields: true });
+  assert.equal(m.status, 200, m.text);
+  assert.deepEqual(csvOf(m), ['Phone,Branch', "'+919000000001,Guntur"], 'no private CIBIL column for a manager');
+  assert.equal((await request('POST', '/api/leads/export', 'ci-manager', { phones: ['919000000001'], columns: ['phone'], includePrivate: true })).status, 403);
+  const o = await request('POST', '/api/leads/export', 'ci-owner', { phones: ['919000000001'], columns: ['phone'], includePrivate: true });
+  assert.deepEqual(csvOf(o), ['Phone,CIBIL score,Branch', "'+919000000001,742,Guntur"]);
+  const a = db.audit_log.filter(x => x.action === 'leads.exported');
+  assert.deepEqual(a.map(x => [x.details.customFields, x.details.privateFields]), [[1, 0], [2, 1]]);
+  assert.ok(!JSON.stringify(a).includes('742') && !JSON.stringify(a).includes('Guntur'));
+  // A formula in a custom value is guarded.
+  db.whatsapp_leads.find(l => l.phone === '919000000001').custom.branch = '=HYPERLINK("x")';
+  const g = await request('POST', '/api/leads/export', 'ci-manager', { phones: ['919000000001'], columns: ['phone'], customFields: true });
+  assert.ok(csvOf(g)[1].includes(`'=HYPERLINK`));
+});
+
+test('D4 Pipeline cards: up to 2 chosen fields; private ones only for managers; set by managers', async () => {
+  assert.equal((await request('PATCH', '/api/customer-fields/cibil', 'ci-agent', { showOnCard: true })).status, 403);
+  assert.equal((await request('PATCH', '/api/customer-fields/cibil', 'ci-manager', { showOnCard: true })).status, 200);
+  assert.equal((await request('PATCH', '/api/customer-fields/branch', 'ci-manager', { showOnCard: true })).status, 200);
+  db.lead_custom_fields.push({ business_id: SUN, key: 'extra', label: 'Extra', type: 'text', options: [], private: false, hidden: false, sort_order: 9, created_at: NOW() });
+  cf.clearCache();
+  const third = await request('PATCH', '/api/customer-fields/extra', 'ci-manager', { showOnCard: true });
+  assert.equal(third.status, 400);
+  assert.match(third.json.error, /At most 2/);
+  const asAgent = await request('GET', '/api/pipeline', 'ci-agent');
+  assert.deepEqual(asAgent.json.cards['919000000001'], [{ label: 'Branch', type: 'text', value: 'Guntur' }]);
+  assert.ok(!JSON.stringify(asAgent.json.cards).includes('742'), 'no private value on an agent\'s board');
+  const asManager = await request('GET', '/api/pipeline', 'ci-manager');
+  assert.deepEqual(asManager.json.cards['919000000001'].map(c => c.value), [742, 'Guntur']);
+});
+
+test('D3 badge: "Imported customer · <tag>" on the Inbox, the chat, the Pipeline and Leads; never another business\'s import name', async () => {
+  const { id } = await runImport('ci-manager', [{ row: 1, phone: '9876500111', name: 'Asha' }], { options: { mode: 'fill', tag: 'Loans Nov' } });
+  const asha = db.whatsapp_leads.find(l => l.business_id === SUN && l.phone === '919876500111');
+  asha.last_contacted_at = NOW();
+  const inbox = await request('GET', '/api/inbox', 'ci-agent');
+  assert.equal(inbox.json.conversations.find(c => c.phone === '919876500111').import_name, 'loans-nov');
+  const chat = await request('GET', '/api/inbox/919876500111', 'ci-agent');
+  assert.equal(chat.json.contact.import_name, 'loans-nov');
+  const pipe = await request('GET', '/api/pipeline', 'ci-agent');
+  assert.ok(JSON.stringify(pipe.json).includes('"import_name":"loans-nov"'));
+  const leads = await request('POST', '/api/leads/search', 'ci-manager', { filters: {} });
+  assert.equal(leads.json.leads.find(l => l.phone === '919876500111').import_name, 'loans-nov');
+  // A lead pointing at another business's import never shows that import's name.
+  db.lead_imports.push({ id: 'e0000000-0000-4000-8000-000000000009', business_id: LOTUS, file_name: 'lotus-secret.csv', options: { tag: 'lotus-vip' }, status: 'done' });
+  asha.import_id = 'e0000000-0000-4000-8000-000000000009';
+  const again = await request('GET', '/api/inbox', 'ci-agent');
+  assert.equal(again.json.conversations.find(c => c.phone === '919876500111').import_name, 'an import');
+  assert.ok(!again.text.includes('lotus'));
+  assert.ok(id);
+});
+
+test('D3 first message after an import: a timeline note once; the import\'s owner kept only when the option is on and they can take it', async () => {
+  const before = { phone: '919876500222', imported_at: NOW(), import_id: null, last_inbound_at: null, assigned_to: 'agent@sunrise.test' };
+  db.whatsapp_leads.push({ business_id: SUN, ...before, stage: 'new', custom: {} });
+  db.lead_assignment_settings = [{ business_id: SUN, mode: 'round_robin', import_owner_first: false }];
+  db.lead_assignment_members = [{ business_id: SUN, email: 'agent@sunrise.test', phone_number_id: '', sort_order: 1 }];
+  // Off: the owner from the import keeps it; one note.
+  let r = await li.onFirstMessage(SUN, '919876500222', before, {});
+  assert.deepEqual(r, { note: true, owner: 'none' });
+  assert.equal((db.lead_notes || []).filter(n => n.phone === '919876500222').length, 1);
+  assert.match(db.lead_notes.find(n => n.phone === '919876500222').body, /First message after import/);
+  r = await li.onFirstMessage(SUN, '919876500222', before, {});
+  assert.equal(r.note, false, 'once only');
+  assert.equal(db.lead_notes.filter(n => n.phone === '919876500222').length, 1);
+  // On + the agent is away: released for the usual assignment, with a note saying why.
+  const lead = db.whatsapp_leads.find(l => l.phone === '919876500222');
+  lead.import_note_at = null;
+  db.lead_assignment_settings[0].import_owner_first = true;
+  db.staff_availability = [{ business_id: SUN, email: 'agent@sunrise.test', available: false }];
+  r = await li.onFirstMessage(SUN, '919876500222', before, {});
+  assert.equal(r.owner, 'released');
+  assert.equal(lead.assigned_to, null);
+  assert.match(db.lead_notes.at(-1).body, /can't take it now/);
+  // On + available: kept.
+  lead.assigned_to = 'agent@sunrise.test'; lead.import_note_at = null;
+  db.staff_availability = [];
+  r = await li.onFirstMessage(SUN, '919876500222', before, {});
+  assert.equal(r.owner, 'kept');
+  assert.equal(lead.assigned_to, 'agent@sunrise.test');
+  // Not imported, or written before: nothing.
+  assert.deepEqual(await li.onFirstMessage(SUN, '919000000001', { phone: '919000000001', imported_at: null }, {}), { note: false, owner: 'none' });
+  assert.deepEqual(await li.onFirstMessage(SUN, '919876500222', { ...before, last_inbound_at: NOW() }, {}), { note: false, owner: 'none' });
+  // The setting is saved by managers only and shown on the Lead assignment page.
+  assert.equal((await request('PUT', '/api/lead-assignment', 'ci-agent', { importOwnerFirst: true })).status, 403);
+});
+
+test('D3 existing customers vs new people: per ad (funnel + CSV) and in Analytics; imported people are not "new leads"', () => {
+  const { buildFunnel, csvOf, isExistingCustomer } = require('../server/adsFunnel.cjs');
+  const { importSplit } = require('../server/analytics.cjs');
+  const from = '2026-11-01T00:00:00.000Z', to = '2026-11-30T00:00:00.000Z';
+  const insights = [{ date: '2026-11-05', ad_id: '11', ad_name: 'Loan ad', adset_id: '22', adset_name: 'Set', campaign_id: '33', campaign_name: 'Loans', spend: 100, impressions: 1000, clicks: 50, conversations: 3 }];
+  const leads = [
+    { phone: '1', stage: 'new', first_ad_id: '11', first_ad_at: '2026-11-05T10:00:00Z', imported_at: '2026-10-01T00:00:00Z' }, // existing
+    { phone: '2', stage: 'new', first_ad_id: '11', first_ad_at: '2026-11-06T10:00:00Z', imported_at: '2026-11-07T00:00:00Z' }, // imported AFTER the chat: new
+    { phone: '3', stage: 'new', first_ad_id: '11', first_ad_at: '2026-11-07T10:00:00Z' },                                       // new
+  ];
+  assert.equal(isExistingCustomer(leads[0], leads[0].first_ad_at), true);
+  assert.equal(isExistingCustomer(leads[1], leads[1].first_ad_at), false);
+  const f = buildFunnel({ insights, leads, statuses: ls.template('general'), from, to });
+  assert.deepEqual([f.totals.chats, f.totals.existing, f.totals.newPeople, f.totals.existingShare], [3, 1, 2, 33.3]);
+  const ad = f.campaigns[0].adsets[0].ads[0];
+  assert.deepEqual([ad.existing, ad.newPeople], [1, 2]);
+  const csv = csvOf(f).split('\r\n');
+  assert.ok(csv[0].includes('Existing customers,New people,Existing customers %'));
+  assert.ok(csv[1].startsWith('Campaign,Loans,,,100,1000,50,3,3,1,2,33.3'), csv[1]);
+  const split = importSplit([...leads, { phone: '4', imported_at: '2026-11-08T00:00:00Z' }], from);
+  assert.deepEqual(split, { importedPeople: 2, adChatsExisting: 1, adChatsNew: 2 });
+});
+
+test('SQL 20261143: show_on_card, import_owner_first, import_note_at; safe to re-run; jsonb compares numbers as numbers', async () => {
+  const { freshDb, migrationSql } = require('./helpers/pgHarness.cjs');
+  const pg = await freshDb();
+  await pg.exec(migrationSql('20261143_customer_import_d3d4.sql'));
+  const cols = (await pg.query("select table_name, column_name from information_schema.columns where column_name in ('show_on_card', 'import_owner_first', 'import_note_at') order by 1, 2")).rows.map(r => `${r.table_name}.${r.column_name}`);
+  assert.deepEqual(cols, ['lead_assignment_settings.import_owner_first', 'lead_custom_fields.show_on_card', 'whatsapp_leads.import_note_at']);
+  // What PostgREST runs for custom->cibil=gte.750: jsonb against jsonb; numbers by value, strings never match.
+  const biz = (await pg.query("insert into public.businesses (name, slug) values ('Jsonb Biz', 'jsonb-biz') returning id")).rows[0].id;
+  for (const [p, c] of [['919000000001', '{"cibil": 1000}'], ['919000000002', '{"cibil": 742}'], ['919000000003', '{"cibil": "800"}']]) {
+    await pg.query('insert into public.whatsapp_leads (business_id, phone, custom) values ($1, $2, $3::jsonb)', [biz, p, c]);
+  }
+  const hit = (await pg.query("select phone from public.whatsapp_leads where business_id = $1 and custom->'cibil' >= '750' and custom->'cibil' >= '-1000000000000000' order by phone", [biz])).rows.map(r => r.phone);
+  assert.deepEqual(hit, ['919000000001'], '1000 matches (text order would not), "800" is text and never matches');
+  const cs = (await pg.query(`select count(*)::int as n from public.whatsapp_leads where business_id = $1 and custom @> '{"cibil": 742}'`, [biz])).rows[0].n;
+  assert.equal(cs, 1);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Part 6: second review of D3 + D4
+// ---------------------------------------------------------------------------------------------
+test('review: hidden fields can\'t be used as filters by anyone (Leads, Inbox, audiences)', async () => {
+  moreFields();
+  db.lead_custom_fields.find(f => f.business_id === SUN && f.key === 'kyc').hidden = true;
+  cf.clearCache();
+  const F = [{ key: 'kyc', label: 'KYC done', type: 'yesno', options: [], private: false, hidden: true, sort_order: 1 }];
+  assert.equal(cf.cleanCustomFilters(F, [{ key: 'kyc', value: true }], { seesPrivate: true }).status, 400);
+  const custom = [{ key: 'kyc', value: true }];
+  assert.equal((await request('POST', '/api/inbox/list', 'ci-agent', { custom })).status, 400, 'agent, Inbox');
+  assert.equal((await request('POST', '/api/inbox/list', 'ci-manager', { custom })).status, 400, 'manager, Inbox');
+  const leads = await request('POST', '/api/leads/search', 'ci-owner', { filters: { custom } });
+  assert.equal(leads.status, 400);
+  assert.match(leads.json.error, /hidden/);
+  assert.equal((await request('POST', '/api/audience/preview', 'ci-manager', { segment: { mode: 'filter', custom } })).status, 400);
+});
+
+test('review: with lead assignment Off, the import-owner switch never leaves a chat with nobody; the note says what happened', async () => {
+  const before = { phone: '919876500333', imported_at: NOW(), import_id: null, last_inbound_at: null, assigned_to: 'agent@sunrise.test' };
+  db.whatsapp_leads.push({ business_id: SUN, ...before, stage: 'new', custom: {} });
+  db.lead_assignment_settings = [{ business_id: SUN, mode: 'off', import_owner_first: true }];
+  db.staff_availability = [{ business_id: SUN, email: 'agent@sunrise.test', available: false }];
+  const r = await li.onFirstMessage(SUN, '919876500333', before, {});
+  assert.equal(r.owner, 'kept_assignment_off');
+  assert.equal(db.whatsapp_leads.find(l => l.phone === '919876500333').assigned_to, 'agent@sunrise.test', 'not released: nobody would take it');
+  const note = db.lead_notes.filter(n => n.phone === '919876500333').at(-1).body;
+  assert.match(note, /stays with them because automatic lead assignment is off/);
+  assert.doesNotMatch(note, /usual rules/);
+  // With assignment on, it is released for the next person (and the note says so).
+  const l = db.whatsapp_leads.find(x => x.phone === '919876500333');
+  l.import_note_at = null;
+  db.lead_assignment_settings[0].mode = 'round_robin';
+  db.lead_assignment_members = [{ business_id: SUN, email: 'agent@sunrise.test', phone_number_id: '', sort_order: 1 }];
+  const r2 = await li.onFirstMessage(SUN, '919876500333', before, {});
+  assert.equal(r2.owner, 'released');
+  assert.match(db.lead_notes.at(-1).body, /goes to the next person by lead assignment/);
 });

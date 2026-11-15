@@ -37,7 +37,7 @@ async function loadContact(biz, phone) {
   const path = (/** @type {string} */ cols) => `whatsapp_leads?select=${cols}&business_id=eq.${biz}&phone=eq.${encodeURIComponent(phone)}`;
   const base = 'phone,stage,bot_paused,bot_paused_until,last_inbound_at,assigned_to';
   // With the import markers (SQL 20261142) when they exist.
-  let res = await dbRequest(path(`${base},imported_at,last_contacted_at`));
+  let res = await dbRequest(path(`${base},imported_at,import_id,last_contacted_at`));
   if (!res.ok) res = await dbRequest(path(base));
   if (!res.ok || !Array.isArray(res.data)) return { ok: false, lead: null };
   return { ok: true, lead: res.data[0] || null };
@@ -305,6 +305,8 @@ async function handleIncomingMessage(biz, msg, value, contactName, receivedAt, n
   if (isNew) await require('./leadsTools.cjs').reapply(biz, msg.from);
   // Also records the number the customer wrote to: every reply below (whatsappFor) goes out from it.
   try { await inbox.onInbound(biz, msg.from, numberId); } catch (err) { console.error('[Inbox unread error]', err); }
+  // An imported customer's first message (server/leadImport.cjs, D3): timeline note; the import's owner if they can take it.
+  if (before.ok && before.lead) await require('./leadImport.cjs').onFirstMessage(biz, msg.from, before.lead, { numberId });
   // Back after a long silence (server/returningLeads.cjs): status by type, owner re-checked. Uses the lead as it was
   // BEFORE this message (its previous customer message).
   if (before.ok && before.lead && !isNew) await require('./returningLeads.cjs').apply(biz, msg.from, before.lead, { numberId });

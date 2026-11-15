@@ -110,4 +110,4 @@ function _setStaffForToken(token, staff) {
   cache.set(token, { staff, expires: Date.now() + CACHE_MS });
 }
 
-module.exports = { requireStaff, _setStaffForToken };
+module.exports = { requireStaff, verifyStaffToken, extractToken, _setStaffForToken };

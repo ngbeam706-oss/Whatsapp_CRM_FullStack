@@ -8,7 +8,7 @@ import type { Role } from './types';
 
 export type View =
   | 'home' | 'chat' | 'pipeline' | 'queries' | 'broadcasts' | 'flow' | 'bot_config' | 'analytics' | 'ads' | 'ai' | 'team' | 'whatsapp' | 'setup' | 'profile'
-  | 'lead_statuses' | 'leads' | 'lead_assignment' | 'appointments' | 'clinic' | 'custom_fields';
+  | 'lead_statuses' | 'leads' | 'lead_assignment' | 'appointments' | 'clinic' | 'custom_fields' | 'activity';
 
 /** 'doctor': clinic doctors (separate logins, not staff): their own appointments and hours only (src/DoctorApp.tsx). */
 export type Area = 'platform' | 'admin' | 'manager' | 'agent' | 'doctor';
@@ -40,6 +40,8 @@ export const SCREENS: Record<View, { path: string; managers: boolean; group: 'wo
   lead_statuses: { path: 'settings/lead-statuses', managers: true, group: 'settings' },
   lead_assignment: { path: 'settings/lead-assignment', managers: true, group: 'settings' },
   custom_fields: { path: 'settings/customer-fields', managers: true, group: 'settings' },
+  // The Activity log: the Business Admin only (OWNER_ONLY below; the server refuses everyone else too).
+  activity: { path: 'settings/activity', managers: true, group: 'settings' },
   clinic: { path: 'settings/clinic', managers: true, group: 'settings' },
   flow: { path: 'settings/bot-flow', managers: true, group: 'settings' },
   bot_config: { path: 'settings/keywords', managers: true, group: 'settings' },
@@ -58,8 +60,11 @@ export function viewOf(pathname: string, base: string): View | null {
   return hit || null;
 }
 
-/** May this role open this screen? */
-export const canOpen = (view: View, isManager: boolean) => !SCREENS[view].managers || isManager;
+/** Screens for the Business Admin only (not managers). */
+export const OWNER_ONLY: readonly View[] = ['activity'];
+
+/** May this role open this screen? (role: for the Business Admin's own screens) */
+export const canOpen = (view: View, isManager: boolean, role?: string) => (!SCREENS[view].managers || isManager) && (!OWNER_ONLY.includes(view) || role === 'owner');
 
 /** The area named by an address (/admin/ads -> 'admin'), 'legacy' for /app/..., null for anything else. */
 export function areaOf(pathname: string): Area | 'legacy' | null {

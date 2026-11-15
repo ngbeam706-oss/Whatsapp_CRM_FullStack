@@ -26,9 +26,30 @@ router.get('/automations/:id', requireManager, id, async (req, res) => {
   res.json(r);
 });
 
-router.post('/automations', requireManager, async (req, res) => reply(res, await automations.createAutomation(req.staff, req.body || {})));
-router.patch('/automations/:id', requireManager, id, async (req, res) => reply(res, await automations.updateAutomation(req.staff.businessId, req.params.id, req.body || {})));
-router.delete('/automations/:id', requireManager, id, async (req, res) => reply(res, await automations.deleteAutomation(req.staff.businessId, req.params.id)));
+// Activity log: the follow-up's name, trigger and on/off; never its message text.
+const activity = require('./activity.cjs');
+/** @param {any} a */
+const autoInfo = (a) => ({ automation: a?.name || '', trigger: a?.trigger || null });
+router.post('/automations', requireManager, async (req, res) => {
+  const r = await automations.createAutomation(req.staff, req.body || {});
+  if ('automation' in r && r.automation) await activity.byStaff(req.staff, 'automation.created', { ...autoInfo(r.automation), on: !!r.automation.is_active });
+  reply(res, r);
+});
+router.patch('/automations/:id', requireManager, id, async (req, res) => {
+  const r = await automations.updateAutomation(req.staff.businessId, req.params.id, req.body || {});
+  if ('automation' in r && r.automation) {
+    const keys = Object.keys(req.body || {});
+    if (keys.length === 1 && keys[0] === 'isActive') await activity.byStaff(req.staff, 'automation.toggled', { ...autoInfo(r.automation), on: !!r.automation?.is_active });
+    else await activity.byStaff(req.staff, 'automation.changed', { ...autoInfo(r.automation), changed: keys.filter(k => /^[a-zA-Z]{1,30}$/.test(k)).slice(0, 20) });
+  }
+  reply(res, r);
+});
+router.delete('/automations/:id', requireManager, id, async (req, res) => {
+  const before = await automations.getAutomation(req.staff.businessId, req.params.id).catch(() => null);
+  const r = await automations.deleteAutomation(req.staff.businessId, req.params.id);
+  if (!r.error) await activity.byStaff(req.staff, 'automation.deleted', autoInfo(/** @type {any} */ (before)?.automation));
+  reply(res, r);
+});
 router.post('/automation-runs/:runId/cancel', requireManager, validate({ params: P.runId }), async (req, res) => reply(res, await automations.cancelRun(req.staff.businessId, req.params.runId)));
 
 module.exports = router;

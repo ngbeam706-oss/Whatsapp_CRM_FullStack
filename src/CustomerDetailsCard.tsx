@@ -9,7 +9,7 @@ import { api, errorMessage, inputCls } from './broadcastUtils';
 import { queryClient } from './queryClient';
 import { BUTTON, LoadError, SkeletonRows } from './ui';
 import type { ShowToast } from './types';
-import type { CustomFieldType } from './importUtils';
+import { showCustomValue, type CustomFieldType } from './importUtils';
 
 export interface DetailField { key: string; label: string; type: CustomFieldType; options: string[]; private: boolean; hidden: boolean; value: string | number | boolean | null }
 interface DetailsResponse { fields: DetailField[]; canEdit: boolean; importedAt?: string | null; importName?: string | null }
@@ -17,18 +17,7 @@ interface DetailsResponse { fields: DetailField[]; canEdit: boolean; importedAt?
 const keyOf = (phone: string) => ['customer-details', phone];
 
 /** A value as people read it: ₹3,00,000 · 05 Dec 2026 · Yes. */
-function showValue(f: Pick<DetailField, 'type' | 'value'>): string {
-  const v = f.value;
-  if (v === null || v === undefined || v === '') return '–';
-  if (f.type === 'yesno') return v ? 'Yes' : 'No';
-  if (f.type === 'amount') return `₹${Number(v).toLocaleString('en-IN')}`;
-  if (f.type === 'number') return Number(v).toLocaleString('en-IN');
-  if (f.type === 'date') {
-    const d = new Date(`${v}T00:00:00`);
-    return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  }
-  return String(v);
-}
+const showValue = showCustomValue;
 
 export default function CustomerDetailsCard({ phone, showToast, compact = false }: { phone: string; showToast: ShowToast; compact?: boolean }) {
   const q = useQuery<DetailsResponse, Error>({

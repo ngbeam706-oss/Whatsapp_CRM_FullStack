@@ -110,6 +110,18 @@ async function canTake(biz, email, numberId = '') {
   return candidates.length ? { ok: true } : { ok: false, why: skipped[0]?.why === 'not_staff' ? 'not_staff' : skipped[0]?.why || 'away' };
 }
 
+/** Lead assignment mode (off / round_robin / least_busy). @param {string} biz */
+async function assignmentMode(biz) {
+  return (await loadSettings(requireBusinessId(biz))).mode;
+}
+
+/** "Imported customers go to the person named in their import" (SQL 20261143; off before it). @param {string} biz @returns {Promise<boolean | null>} null = not available yet */
+async function importOwnerFirst(biz) {
+  const r = await dbRequest(`lead_assignment_settings?business_id=eq.${requireBusinessId(biz)}&select=import_owner_first`);
+  if (!r.ok) return null;
+  return !!(Array.isArray(r.data) && r.data[0]?.import_owner_first);
+}
+
 /** @param {string} biz @returns {Promise<Array<{ email: string, phone_number_id: string, sort_order: number }>>} */
 async function loadMembers(biz) {
   const r = await dbRequest(`lead_assignment_members?business_id=eq.${biz}&select=email,phone_number_id,sort_order&order=sort_order.asc`);
@@ -213,6 +225,7 @@ async function view(staff) {
   return {
     settings: { mode: settings.mode, maxOpen: settings.maxOpen, perNumber: settings.perNumber, updatedBy: settings.updatedBy, updatedAt: settings.updatedAt },
     returning,
+    importOwnerFirst: await importOwnerFirst(biz),
     teams: keys.map(teamState),
     people: state,
     numbers,
@@ -223,7 +236,7 @@ async function view(staff) {
 
 /**
  * Save the mode, cap, per-number switch and teams. Audited (field names only).
- * @param {Staff} staff @param {{ mode?: unknown, maxOpen?: unknown, perNumber?: unknown, teams?: unknown, returning?: any }} input
+ * @param {Staff} staff @param {{ mode?: unknown, maxOpen?: unknown, perNumber?: unknown, teams?: unknown, returning?: any, importOwnerFirst?: unknown }} input
  */
 async function save(staff, input = {}) {
   const no = denied(staff); if (no) return no;
@@ -276,6 +289,8 @@ async function save(staff, input = {}) {
     ...(mode !== undefined ? { mode } : {}), ...(maxOpen !== undefined ? { max_open: maxOpen } : {}),
     ...(input.perNumber !== undefined ? { per_number: !!input.perNumber } : {}),
     ...ret,
+    // Customer import D3 (SQL 20261143): an imported customer's first message stays with the person named in the import.
+    ...(input.importOwnerFirst !== undefined ? { import_owner_first: !!input.importOwnerFirst } : {}),
   };
   const s = await dbRequest('lead_assignment_settings?on_conflict=business_id', { method: 'POST', prefer: 'resolution=merge-duplicates,return=minimal', body });
   if (!s.ok) return { error: 'Could not save. Has the lead assignment SQL (20261136) been run?' };
@@ -286,7 +301,7 @@ async function save(staff, input = {}) {
       if (!ins.ok) return { error: 'Could not save the team.' };
     }
   }
-  const fields = [...(mode !== undefined ? ['mode'] : []), ...(maxOpen !== undefined ? ['maxOpen'] : []), ...(input.perNumber !== undefined ? ['perNumber'] : []), ...(rows ? ['teams'] : []), ...Object.keys(ret)];
+  const fields = [...(mode !== undefined ? ['mode'] : []), ...(maxOpen !== undefined ? ['maxOpen'] : []), ...(input.perNumber !== undefined ? ['perNumber'] : []), ...(rows ? ['teams'] : []), ...Object.keys(ret), ...(input.importOwnerFirst !== undefined ? ['importOwnerFirst'] : [])];
   await dbRequest('audit_log', { method: 'POST', prefer: 'return=minimal', body: { business_id: biz, actor_email: staff.email, actor_role: staff.role, action: 'lead_assignment.updated', details: { fields, ...(mode ? { mode } : {}) } } });
   return view(staff);
 }
@@ -327,4 +342,4 @@ async function setMyAvailability(staff, input = {}) {
   return myAvailability(staff);
 }
 
-module.exports = { loadReturning, canTake, MODES, MODE_LABEL, onShift, pickCandidates, teamFor, defaultAvailability, assignIfDue, view, save, myAvailability, setMyAvailability };
+module.exports = { importOwnerFirst, assignmentMode, loadReturning, canTake, MODES, MODE_LABEL, onShift, pickCandidates, teamFor, defaultAvailability, assignIfDue, view, save, myAvailability, setMyAvailability };

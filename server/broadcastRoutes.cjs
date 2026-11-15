@@ -9,6 +9,16 @@ const campaigns = require('./campaigns.cjs');
 const { requireManager, NO_WHATSAPP } = require('./tenant.cjs');
 const { getWhatsApp } = require('./whatsapp.cjs');
 const { validate, params: P } = require('./validate.cjs');
+const activity = require('./activity.cjs');
+const { dbRequest, countRows } = require('./db.cjs');
+
+/** A broadcast for the Activity log: its name, template, sender number and audience size (never the recipients). @param {string} biz @param {unknown} id */
+async function campaignInfo(biz, id) {
+  const r = await dbRequest(`campaigns?id=eq.${id}&business_id=eq.${biz}&select=name,template_name,phone_number_id`);
+  const c = r.ok && Array.isArray(r.data) ? r.data[0] : null;
+  const audience = await countRows('campaign_recipients', `campaign_id=eq.${id}&business_id=eq.${biz}`);
+  return { campaign: c?.name || '', template: c?.template_name || '', fromNumberId: c?.phone_number_id || null, audience: audience ?? null };
+}
 
 const router = express.Router();
 // Template and campaign bodies are nested; templates.cjs / campaigns.cjs check them in detail.
@@ -62,12 +72,14 @@ router.get('/templates', requireWhatsApp, async (req, res) => {
 router.post('/templates', requireManager, requireWhatsApp, async (req, res) => {
   const r = await tpl.createTemplate(req.wa, req.body || {});
   if (r.error) return fail(res, metaError(r));
+  await activity.byStaff(req.staff, 'template.created', { template: String(req.body?.name || '').slice(0, 512), category: r.category || req.body?.category || null, language: req.body?.language || null });
   res.json({ success: true, id: r.id, status: r.status, category: r.category });
 });
 
 router.delete('/templates/:name', requireManager, validate({ params: P.templateName }), requireWhatsApp, async (req, res) => {
   const r = await tpl.deleteTemplate(req.wa, req.params.name);
   if (r.error) return fail(res, metaError(r));
+  await activity.byStaff(req.staff, 'template.deleted', { template: String(req.params.name) });
   res.json({ success: true });
 });
 
@@ -86,7 +98,7 @@ router.post('/audience/preview', requireManager, async (req, res) => {
       sample: a.recipients.slice(0, 5),
     });
   } catch (err) {
-    fail(res, err instanceof Error ? err.message : String(err), 500);
+    fail(res, err instanceof Error ? err.message : String(err), Number(/** @type {any} */ (err)?.status) || 500);
   }
 });
 
@@ -107,7 +119,12 @@ router.post('/campaigns', requireManager, async (req, res) => {
   const r = await campaigns.createCampaign(req.staff, req.body || {});
   if (r.error) return fail(res, r.error);
   let start = null;
-  if (req.body?.sendNow) start = await campaigns.startCampaign(req.staff.businessId, r.campaign.id);
+  const info = { campaign: r.campaign?.name || '', template: r.campaign?.template_name || '', fromNumberId: r.campaign?.phone_number_id || null, audience: r.recipients };
+  await activity.byStaff(req.staff, 'broadcast.created', info);
+  if (req.body?.sendNow) {
+    start = await campaigns.startCampaign(req.staff.businessId, r.campaign.id);
+    if (start && !start.error) await activity.byStaff(req.staff, 'broadcast.sent', info);
+  }
   res.json({ success: true, ...r, start });
 });
 
@@ -120,12 +137,14 @@ router.post('/campaigns/test', requireManager, async (req, res) => {
 router.post('/campaigns/:id/start', requireManager, campaignId, async (req, res) => {
   const r = await campaigns.startCampaign(req.staff.businessId, req.params.id);
   if (r.error) return fail(res, r.error);
+  await activity.byStaff(req.staff, 'broadcast.sent', await campaignInfo(req.staff.businessId, req.params.id));
   res.json({ success: true, ...r });
 });
 
 router.post('/campaigns/:id/cancel', requireManager, campaignId, async (req, res) => {
   const r = await campaigns.cancelCampaign(req.staff.businessId, req.params.id);
   if (r.error) return fail(res, r.error);
+  await activity.byStaff(req.staff, 'broadcast.cancelled', await campaignInfo(req.staff.businessId, req.params.id));
   res.json({ success: true, ...r });
 });
 

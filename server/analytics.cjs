@@ -206,6 +206,18 @@ function byNumber(messages) {
     .sort((a, b) => b.customerMessages - a.customerMessages || b.repliesSent - a.repliesSent);
 }
 
+/**
+ * Customer import D3 (pure): people added by imports in the period, and ad chats in the period split into existing
+ * customers (imported before the ad chat started) and new people.
+ * @param {Row[]} allLeads @param {string} from
+ */
+function importSplit(allLeads, from) {
+  const imported = allLeads.filter(l => l.imported_at && l.imported_at >= from).length;
+  const adChats = allLeads.filter(l => l.first_ad_id && l.first_ad_at && l.first_ad_at >= from);
+  const existing = adChats.filter(l => require('./adsFunnel.cjs').isExistingCustomer(l, l.first_ad_at)).length;
+  return { importedPeople: imported, adChatsExisting: existing, adChatsNew: adChats.length - existing };
+}
+
 /** @param {{ leads: Row[], allLeads: Row[], messages: Row[], events: Row[], from: string, to: string }} data */
 function summarise({ leads, allLeads, messages, events, from, to }) {
   const days = dayRange(from, to);
@@ -294,7 +306,9 @@ async function report(businessId, { days = 30 } = {}) {
   try {
     const [allLeads, messages, events, campaigns, automations] = await Promise.all([
       // With returned_at (SQL 20261138: returning customers) when the column exists.
-      fetchAll(`whatsapp_leads?select=phone,source,created_at,stage,assigned_to,unread_count,first_ad_id,first_ad_at,first_ad_headline,last_ad_id,last_ad_at,last_ad_headline,returned_at&${b}&order=created_at.asc`)
+      // With imported_at (SQL 20261142: customer import) when it exists.
+      fetchAll(`whatsapp_leads?select=phone,source,created_at,stage,assigned_to,unread_count,first_ad_id,first_ad_at,first_ad_headline,last_ad_id,last_ad_at,last_ad_headline,returned_at,imported_at&${b}&order=created_at.asc`)
+        .catch(() => fetchAll(`whatsapp_leads?select=phone,source,created_at,stage,assigned_to,unread_count,first_ad_id,first_ad_at,first_ad_headline,last_ad_id,last_ad_at,last_ad_headline,returned_at&${b}&order=created_at.asc`))
         .catch(() => fetchAll(`whatsapp_leads?select=phone,source,created_at,stage,assigned_to,unread_count,first_ad_id,first_ad_at,first_ad_headline,last_ad_id,last_ad_at,last_ad_headline&${b}&order=created_at.asc`)),
       // phone_number_id: the "by number" breakdown; before SQL 20261122 the column is missing, so read without it.
       fetchAll(`whatsapp_messages?select=contact_phone,direction,sent_by,timestamp,phone_number_id&${b}&timestamp=gte.${f}&order=timestamp.asc`)
@@ -318,11 +332,12 @@ async function report(businessId, { days = 30 } = {}) {
     const ls = require('./leadStatuses.cjs');
     const statusList = await ls.listFor(businessId);
     const typed = ls.byType(statusList, allLeads);
-    const leads = typed.filter(l => l.created_at && l.created_at >= from);
+    // New leads: people who appeared in the period, not people added by a customer import (counted apart).
+    const leads = typed.filter(l => l.created_at && l.created_at >= from && !l.imported_at);
     const base = summarise({ leads, allLeads: typed, messages, events, from, to });
     // Returning leads (came back after a long silence in this period), counted apart from new leads.
     const returningLeads = allLeads.filter(l => l.returned_at && l.returned_at >= from && l.returned_at < to).length;
-    const summary = { ...base, kpis: { ...base.kpis, returningLeads }, pipeline: ls.pipelineCounts(statusList, allLeads) };
+    const summary = { ...base, kpis: { ...base.kpis, returningLeads, ...importSplit(typed, from) }, pipeline: ls.pipelineCounts(statusList, allLeads) };
 
     /** @type {Map<string, Row>} */
     const cStats = new Map((campaignStats.ok ? campaignStats.data : []).map((/** @type {Row} */ s) => [s.campaign_id, s]));
@@ -338,4 +353,4 @@ async function report(businessId, { days = 30 } = {}) {
   }
 }
 
-module.exports = { istDay, dayRange, median, leadsByDay, staffResponseTimes, busiestHours, topProducts, adsPerformance, byNumber, summarise, report };
+module.exports = { importSplit, istDay, dayRange, median, leadsByDay, staffResponseTimes, busiestHours, topProducts, adsPerformance, byNumber, summarise, report };

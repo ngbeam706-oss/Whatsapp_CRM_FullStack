@@ -122,7 +122,7 @@ function Members({ team, error, showToast, onOpen }: { team: TeamResponse | null
                 <div className={`w-10 h-10 rounded-full ${avatarBg(m.email)} text-white flex items-center justify-center font-bold text-xs flex-shrink-0`}>{initials(m.full_name, m.email)}</div>
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-slate-800 truncate group-hover:text-wa-teal">{m.full_name || m.email}{isMe && <span className="text-slate-400 font-normal"> (you)</span>}</div>
-                  <div className="text-xs text-slate-500 truncate">{[m.full_name ? m.email : null, m.job_title, `added ${m.created_at ? new Date(m.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '–'}`].filter(Boolean).join(' · ')}</div>
+                  <div className="text-xs text-slate-500 truncate">{[m.full_name ? m.email : null, m.job_title, `added ${m.created_at ? new Date(m.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '–'}`, `last signed in ${m.last_signed_in ? new Date(m.last_signed_in).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : 'not recorded yet'}`].filter(Boolean).join(' · ')}</div>
                 </div>
                 <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-wa-teal flex-shrink-0" />
               </button>

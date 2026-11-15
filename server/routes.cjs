@@ -116,6 +116,8 @@ router.post('/bot-rules', requireManager, async (req, res) => {
   }
   const current = store.currentBotRules(biz);
   await store.syncRulesToSupabase(biz, current);
+  // Activity log: that a rule was saved and how many there are (never the keyword or the reply text).
+  await require('./activity.cjs').byStaff(req.staff, 'bot.rule_saved', { count: current.length, many: Array.isArray(rules) });
   res.json({ success: true, count: current.length, rules: current });
 });
 
@@ -128,6 +130,7 @@ router.delete('/bot-rules/:id', requireManager, async (req, res) => {
   if (!id || id.length > 200) return res.status(400).json({ success: false, error: 'Invalid rule.' });
   const ok = await store.deleteBotRule(req.staff.businessId, id);
   if (!ok) return res.status(500).json({ success: false, error: 'Could not delete the rule.' });
+  await require('./activity.cjs').byStaff(req.staff, 'bot.rule_deleted', { count: store.currentBotRules(req.staff.businessId).length });
   res.json({ success: true, rules: store.currentBotRules(req.staff.businessId) });
 });
 
@@ -136,11 +139,17 @@ router.post('/bot-catalog', requireManager, async (req, res) => {
   // { reset: true } puts the menus back to this business's starting bot.
   if (req.body?.reset === true) {
     await store.syncCatalogToSupabase(biz, store.resetCatalog(biz));
+    await require('./activity.cjs').byStaff(req.staff, 'bot.flow_reset', {});
     return res.json({ success: true, catalog: store.currentCatalog(biz) });
   }
   const catalog = req.body?.catalog;
   if (catalog && typeof catalog === 'object' && !Array.isArray(catalog)) {
+    const before = JSON.parse(JSON.stringify(await store.getActiveCatalog(biz) || {}));
     await store.syncCatalogToSupabase(biz, store.mergeCatalog(biz, catalog));
+    // Activity log: which parts of the bot changed, by their names only (never the bot's text).
+    const after = store.currentCatalog(biz) || {};
+    const parts = Object.keys(after).filter(k => /^[a-zA-Z]{1,40}$/.test(k) && JSON.stringify(after[k]) !== JSON.stringify(before[k]));
+    if (parts.length) await require('./activity.cjs').byStaff(req.staff, 'bot.flow_changed', { parts: parts.slice(0, 30) });
   }
   res.json({ success: true, catalog: store.currentCatalog(biz) });
 });

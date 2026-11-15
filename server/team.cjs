@@ -59,8 +59,20 @@ async function addExisting(businessId, email, role) {
   return { member: res.data[0], existing: true };
 }
 
-/** @param {{ businessId: string }} me  only the business is used @param {unknown} rawEmail @param {unknown} [role] */
+/**
+ * Invite (or add an existing login) and record team.invited in the Activity log (the platform's first-owner invite
+ * records it as the platform). @param {{ businessId: string, email?: string, role?: string }} me @param {unknown} rawEmail @param {unknown} [role]
+ */
 async function inviteStaff(me, rawEmail, role = 'agent') {
+  const r = await inviteStaffNoLog(me, rawEmail, role);
+  if (!r.error) {
+    await require('./activity.cjs').record({ email: me.email || 'platform', role: me.role || 'platform', businessId: me.businessId }, 'team.invited', { member: String(rawEmail || '').trim().toLowerCase(), role, existingLogin: 'existing' in r && !!r.existing });
+  }
+  return r;
+}
+
+/** @param {{ businessId: string }} me  only the business is used @param {unknown} rawEmail @param {unknown} [role] */
+async function inviteStaffNoLog(me, rawEmail, role = 'agent') {
   const businessId = requireBusinessId(me?.businessId);
   const email = String(rawEmail || '').trim().toLowerCase();
   if (!isEmail(email)) return { error: 'Enter a valid email address.' };
@@ -123,6 +135,7 @@ async function updateRole(userId, role, me) {
   }
   const res = await dbRequest(`staff_members?user_id=eq.${userId}&business_id=eq.${businessId}`, { method: 'PATCH', prefer: 'return=representation', body: { role } });
   if (!res.ok || !res.data?.length) return { error: 'Staff member not found.' };
+  if (target.data[0].role !== role) await require('./activity.cjs').byStaff(me, 'team.role_changed', { member: res.data[0].email, from: target.data[0].role, to: role });
   return { member: res.data[0] };
 }
 
@@ -134,9 +147,10 @@ async function removeStaff(userId, me) {
   const res = await dbRequest(`staff_members?user_id=eq.${userId}&business_id=eq.${businessId}`, { method: 'DELETE', prefer: 'return=representation' });
   if (!res.ok || !res.data?.length) return { error: 'Staff member not found.' };
   // Their chats in this business go back to the shared queue.
-  await dbRequest(`whatsapp_leads?business_id=eq.${businessId}&assigned_to=eq.${encodeURIComponent(res.data[0].email)}`, {
-    method: 'PATCH', prefer: 'return=minimal', body: { assigned_to: null },
+  const back = await dbRequest(`whatsapp_leads?business_id=eq.${businessId}&assigned_to=eq.${encodeURIComponent(res.data[0].email)}&select=phone`, {
+    method: 'PATCH', prefer: 'return=representation', body: { assigned_to: null },
   });
+  await require('./activity.cjs').byStaff(me, 'team.removed', { member: res.data[0].email, role: res.data[0].role, chatsReturned: back.ok && Array.isArray(back.data) ? back.data.length : 0 });
   return { removed: true };
 }
 

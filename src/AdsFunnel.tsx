@@ -11,6 +11,8 @@ import type { ShowToast, TeamResponse } from './types';
 type Num = number | null;
 interface Metrics {
   spend: number; impressions: number; clicks: number; metaChats: number; chats: number; returning?: number; replied: number; working: number; won: number; done: number; repeat: number; lost: number;
+  /** Customer import D3: chats from people imported before the ad chat (existing customers) vs new people. */
+  existing?: number; newPeople?: number; existingShare?: Num;
   revenue: number; valued: number; costPerChat: Num; costPerWorking: Num; costPerWon: Num; costPerDone: Num; wonRate: Num; roas: Num;
 }
 interface AdRow extends Metrics { adId: string; name: string }
@@ -104,6 +106,7 @@ export default function AdsFunnel({ showToast }: { showToast: ShowToast }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2" data-testid="funnel-kpis">
             <Kpi label="Spend" value={money(f.totals.spend)} now={f.totals.spend} before={f.previous.spend} neutral />
             <Kpi label="Chats in the CRM" value={String(f.totals.chats)} now={f.totals.chats} before={f.previous.chats} />
+            <Kpi label="Existing customers" value={`${f.totals.existing ?? 0}${f.totals.existingShare != null ? ` (${f.totals.existingShare}%)` : ''}`} now={f.totals.existing ?? 0} before={f.previous.existing ?? 0} neutral hint="Ad chats from people already in your records (imported before the chat started). The rest are new people." />
             <Kpi label="Booked / ordered" value={String(f.totals.won)} now={f.totals.won} before={f.previous.won} />
             <Kpi label="Cost per booking" value={money(f.totals.costPerWon)} now={f.totals.costPerWon} before={f.previous.costPerWon} lowerIsBetter />
             <Kpi label="Revenue" value={f.totals.revenue ? money(f.totals.revenue) : '–'} now={f.totals.revenue} before={f.previous.revenue} hint={f.avgValue ? `Bookings without an amount count as ${money(f.avgValue)} (Bookings to Meta).` : 'Add a booking amount when you mark a chat booked.'} />
@@ -179,6 +182,7 @@ export function AdsFunnelSummary({ days }: { days: number }) {
       <span className="font-bold text-slate-800">Ads</span>
       <span>{money(f.totals.spend)} spent</span>
       <span>{f.totals.chats} chats</span>
+      <span data-testid="summary-existing">{f.totals.existing ?? 0} existing customers · {f.totals.newPeople ?? f.totals.chats} new people</span>
       <span>{f.totals.won} booked</span>
       <span>{money(f.totals.costPerWon)} per booking</span>
       {f.totals.roas !== null && <span>{f.totals.roas}× return on ad spend</span>}
@@ -238,8 +242,8 @@ function Trend({ rows, money }: { rows: Funnel['trend']; money: (n: Num) => stri
 function CampaignTable({ rows, money }: { rows: CampaignRow[]; money: (n: Num) => string }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   if (!rows.length) return <p className="text-xs text-slate-500">No ad results or ad chats in this period.</p>;
-  const cells = (m: Metrics) => [money(m.spend), m.chats, m.working, m.won, m.done, m.lost, money(m.costPerChat), money(m.costPerWon), m.wonRate === null ? '–' : `${m.wonRate}%`, m.revenue ? money(m.revenue) : '–', m.roas === null ? '–' : `${m.roas}×`];
-  const head = ['', 'Spend', 'Chats', 'Working', 'Booked', 'Done', 'Lost', 'Per chat', 'Per booking', 'Rate', 'Revenue', 'ROAS'];
+  const cells = (m: Metrics) => [money(m.spend), m.chats, `${m.existing ?? 0}${m.existingShare != null ? ` · ${m.existingShare}%` : ''}`, m.newPeople ?? m.chats, m.working, m.won, m.done, m.lost, money(m.costPerChat), money(m.costPerWon), m.wonRate === null ? '–' : `${m.wonRate}%`, m.revenue ? money(m.revenue) : '–', m.roas === null ? '–' : `${m.roas}×`];
+  const head = ['', 'Spend', 'Chats', 'Existing', 'New', 'Working', 'Booked', 'Done', 'Lost', 'Per chat', 'Per booking', 'Rate', 'Revenue', 'ROAS'];
   const row = (key: string, label: ReactNode, m: Metrics, depth: number, toggle?: () => void, isOpen?: boolean) => (
     <tr key={key} className={depth === 0 ? 'bg-slate-50 font-semibold' : ''} data-testid={depth === 0 ? 'funnel-campaign' : undefined}>
       <td className="py-1.5 pr-2" style={{ paddingLeft: depth * 16 }}>

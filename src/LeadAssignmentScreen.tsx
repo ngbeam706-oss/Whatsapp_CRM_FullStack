@@ -13,6 +13,8 @@ interface AssignmentView {
   teams: Team[]; people: Person[]; numbers: Array<{ id: string; label?: string; phoneNumber?: string; main?: boolean }>;
   sendWindow: { start: number; end: number }; tableReady: boolean;
   returning?: Returning;
+  /** Customer import D3 (SQL 20261143): null before that SQL. */
+  importOwnerFirst?: boolean | null;
 }
 interface Returning { ready: boolean; enabled: boolean; days: number; statusCustomers: boolean; statusOthers: boolean; owner: 'same' | 'afresh' }
 const MODES: Array<[Mode, string, string]> = [
@@ -147,9 +149,33 @@ export default function LeadAssignmentScreen({ showToast }: { showToast: ShowToa
           </>
         )}
         {data.returning && <ReturningCard key={JSON.stringify(data.returning)} value={data.returning} showToast={showToast} />}
+        {data.importOwnerFirst !== undefined && data.importOwnerFirst !== null && <ImportOwnerCard on={data.importOwnerFirst} showToast={showToast} />}
         {data.settings.updatedBy && <p className="text-xs text-slate-500">Last changed by {data.settings.updatedBy}{data.settings.updatedAt ? ` on ${new Date(data.settings.updatedAt).toLocaleString()}` : ''}.</p>}
       </div>
     </div>
+  );
+}
+
+/** Customer import D3: an imported customer's first message goes to the person named in their import, if they can take it. */
+function ImportOwnerCard({ on, showToast }: { on: boolean; showToast: ShowToast }) {
+  const [busy, setBusy] = useState(false);
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    try {
+      await api('/api/lead-assignment', { method: 'PUT', body: { importOwnerFirst: next } });
+      await refreshApi('/api/lead-assignment');
+      showToast(next ? 'Imported customers go to the person named in their import' : 'Imported customers: usual assignment');
+    } catch (e) { showToast(errorMessage(e)); } finally { setBusy(false); }
+  };
+  return (
+    <section className="bg-white border border-slate-200 rounded-xl p-4 space-y-2" data-testid="import-owner-card">
+      <h2 className="text-base font-semibold text-slate-800">Imported customers</h2>
+      <label className="flex items-start gap-2 text-sm cursor-pointer">
+        <input type="checkbox" checked={on} disabled={busy} onChange={e => void toggle(e.target.checked)} className="mt-1" aria-label="Imported customers go to the person named in their import" />
+        <span>When an imported customer writes for the first time, they go to the person named in their import (the "Assigned to" column)
+          <span className="block text-xs text-slate-500">Only if that person is available, on shift and under the open-chat limit; otherwise the usual assignment applies. Off: the person named in the import keeps the chat, as now.</span></span>
+      </label>
+    </section>
   );
 }
 

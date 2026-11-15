@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Contact, Download, Trash2, Search, X, UserPlus, FileSpreadsheet, IdCard } from 'lucide-react';
 import { api, errorMessage, inputInlineCls } from './broadcastUtils';
@@ -7,6 +7,8 @@ import { refreshApi, useApi } from './queryClient';
 import { useConfirm } from './confirm';
 import { BUTTON, DialogLoading, Drawer, EmptyState, LoadError, Modal, PageHeader, SkeletonTable } from './ui';
 import CustomerDetailsCard from './CustomerDetailsCard';
+import { CustomFieldFilters } from './customFilters';
+import { activeCustomFilters, useFilterableFields, type CustomFilterValue } from './customFilterUtils';
 // The import wizard (and the Excel reader it loads) downloads only when opened.
 const ImportCustomers = lazy(() => import('./ImportCustomers'));
 import { displayName, shortTime } from './crmUtils';
@@ -14,17 +16,17 @@ import { useLeadStatuses, statusLook } from './leadStatuses';
 import { MoreFilters } from './leadFilters';
 import { NO_MORE_FILTERS, moreFilterParams, useStoredState, type MoreFilterValues } from './leadFilterUtils';
 import AddLeadModal from './AddLeadModal';
-import { ReturnedBadge, RenameButton } from './leadNames';
+import { ImportedBadge, ReturnedBadge, RenameButton } from './leadNames';
 import { otherWaName, useRenameLead } from './leadNameUtils';
 import type { Me, ShowToast, TeamResponse } from './types';
 
 interface LeadRow {
   phone: string; name: string | null; stage: string; source: string | null; tags: string[] | null; assigned_to: string | null;
   created_at: string | null; last_contacted_at: string | null; opted_out: boolean | null; first_ad_headline: string | null; last_ad_headline: string | null;
-  wa_name?: string | null; returned_at?: string | null; returned_after_days?: number | null; imported_at?: string | null;
+  wa_name?: string | null; returned_at?: string | null; returned_after_days?: number | null; imported_at?: string | null; import_id?: string | null; import_name?: string | null;
 }
 interface SearchResult { total: number; leads: LeadRow[]; capped: boolean }
-interface Filters extends MoreFilterValues { status: string; assignee: string; unread: boolean; closed: 'any' | 'open' | 'closed'; imported?: boolean }
+interface Filters extends MoreFilterValues { status: string; assignee: string; unread: boolean; closed: 'any' | 'open' | 'closed'; imported?: boolean; custom?: CustomFilterValue[] }
 
 const COLUMNS: Array<[string, string]> = [
   ['name', 'Name'], ['waName', 'WhatsApp name'], ['phone', 'Phone'], ['status', 'Status'], ['statusType', 'Status type'], ['source', 'Source'], ['ad', 'Ad'],
@@ -42,10 +44,21 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
   const staff = useApi<TeamResponse>('/api/team').data?.staff || [];
   const [f, setF] = useStoredState<Filters>(`leads-filters:${me.email}`, { ...NO_MORE_FILTERS, status: '', assignee: '', unread: false, closed: 'any' });
   const [q, setQ] = useState('');
+  // Customer-field filters: only fields this person can filter by now (one made hidden since is dropped, never sent unseen).
+  const filterable = useFilterableFields(true);
+  const usableKeys = useMemo(() => new Set(filterable.fields.map(x => x.key)), [filterable.fields]);
+  const customActive = useMemo(() => (filterable.loading ? [] : activeCustomFilters(f.custom).filter(c => usableKeys.has(c.key))), [filterable.loading, f.custom, usableKeys]);
+  useEffect(() => {
+    if (filterable.loading || !f.custom?.length) return;
+    const kept = f.custom.filter(c => usableKeys.has(c.key));
+    if (kept.length !== f.custom.length) setF(old => ({ ...old, custom: kept }));
+  }, [filterable.loading, usableKeys, f.custom, setF]);
   const filters = useMemo(() => ({
     ...moreFilterParams(f), ...(f.status ? { status: f.status } : {}), ...(f.assignee ? { assignee: f.assignee } : {}),
-    ...(f.unread ? { unread: true } : {}), ...(f.imported ? { imported: true } : {}), closed: f.closed, ...(q.trim() ? { q: q.trim() } : {}),
-  }), [f, q]);
+    ...(f.unread ? { unread: true } : {}), ...(f.imported ? { imported: true } : {}), closed: f.closed,
+    // Customer fields (D4): sent in the POST body, never in the address.
+    ...(customActive.length ? { custom: customActive } : {}), ...(q.trim() ? { q: q.trim() } : {}),
+  }), [f, q, customActive]);
   const result = useQuery<SearchResult, Error>({
     queryKey: ['api', '/api/leads/search', JSON.stringify(filters)],
     queryFn: () => api<SearchResult>('/api/leads/search', { method: 'POST', body: { filters } }),
@@ -68,10 +81,10 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
   // What an action works on: the picked numbers, or everything matching the filters.
   const target = () => (allMatching ? { filters } : { phones: picked });
 
-  const exportCsv = async (columns: string[]) => {
+  const exportCsv = async (columns: string[], extra: { customFields: boolean; includePrivate: boolean }) => {
     setBusy('export');
     try {
-      const res = await apiFetch('/api/leads/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(count ? target() : { filters }), columns }) });
+      const res = await apiFetch('/api/leads/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(count ? target() : { filters }), columns, ...extra }) });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error((d as { error?: string }).error || `Export failed (${res.status}).`); }
       const blob = await res.blob();
       const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || 'leads.csv';
@@ -134,6 +147,7 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
             <label className="flex items-center gap-1 text-slate-600"><input type="checkbox" checked={!!f.imported} onChange={e => setFilter({ imported: e.target.checked })} /> Imported, not chatted yet</label>
           </div>
           <MoreFilters value={f} onChange={v => setFilter(v)} />
+          <CustomFieldFilters value={f.custom || []} onChange={v => setFilter({ custom: v })} />
         </section>
 
         <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="leads-actions">
@@ -170,7 +184,8 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
                         <RenameButton onClick={() => rename(l, () => { void result.refetch(); })} label={`Rename ${displayName(l)}`} />
                         <ReturnedBadge contact={l} />
                         {otherWaName(l) && <span className="ml-1 text-slate-500">WhatsApp: {otherWaName(l)}</span>}
-                        {l.imported_at && !l.last_contacted_at && <span className="ml-1 text-2xs px-1 rounded border border-sky-200 bg-sky-50 text-sky-700 font-semibold">Imported</span>}
+                        <span className="ml-1"><ImportedBadge contact={l} /></span>
+                        {l.imported_at && !l.last_contacted_at && <span className="ml-1 text-2xs text-slate-500">not chatted yet</span>}
                         <button onClick={() => setDetailsOf(l)} className="ml-1 text-slate-400 hover:text-wa-teal cursor-pointer align-middle" aria-label={`Details of ${displayName(l)}`}><IdCard className="w-3.5 h-3.5 inline" /></button>
                         {l.opted_out && <span className="ml-1 text-2xs px-1 rounded border border-rose-200 bg-rose-50 text-rose-700 font-semibold">STOP</span>}
                         {(l.tags || []).slice(0, 2).map(t => <span key={t} className="ml-1 text-2xs bg-slate-100 text-slate-600 rounded-full px-1.5">{t}</span>)}</td>
@@ -190,7 +205,7 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
         )}
       </div>
 
-      {showExport && <ExportDialog count={count || data?.total || 0} busy={busy === 'export'} onClose={() => setShowExport(false)} onExport={exportCsv} />}
+      {showExport && <ExportDialog count={count || data?.total || 0} busy={busy === 'export'} isOwner={me.role === 'owner'} onClose={() => setShowExport(false)} onExport={exportCsv} />}
       {importing && <Suspense fallback={<DialogLoading label="Loading the import" />}><ImportCustomers onClose={() => { setImporting(false); void result.refetch(); }} showToast={showToast} isHospital={isHospital} /></Suspense>}
       {detailsOf && (
         <Drawer title={displayName(detailsOf)} onClose={() => setDetailsOf(null)}>
@@ -207,19 +222,28 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
 }
 
 /** Choose the columns, then download (Excel opens it, Telugu and ₹ included). */
-function ExportDialog({ count, busy, onClose, onExport }: { count: number; busy: boolean; onClose: () => void; onExport: (columns: string[]) => void }) {
+function ExportDialog({ count, busy, isOwner, onClose, onExport }: { count: number; busy: boolean; isOwner: boolean; onClose: () => void; onExport: (columns: string[], extra: { customFields: boolean; includePrivate: boolean }) => void }) {
   const [cols, setCols] = useState<string[]>(COLUMNS.map(([k]) => k).filter(k => k !== 'optedOut'));
+  const [customFields, setCustomFields] = useState(true);
+  const [includePrivate, setIncludePrivate] = useState(false);
   return (
     <Modal title={`Export ${count.toLocaleString('en-IN')} leads`} onClose={onClose}
       footer={<>
         <button onClick={onClose} className={BUTTON.secondary}>Cancel</button>
-        <button onClick={() => onExport(cols)} disabled={busy || !cols.length} className={BUTTON.primary} data-testid="export-go"><Download className="w-3.5 h-3.5" /> {busy ? 'Preparing…' : 'Download CSV'}</button>
+        <button onClick={() => onExport(cols, { customFields, includePrivate: isOwner && includePrivate })} disabled={busy || (!cols.length && !customFields)} className={BUTTON.primary} data-testid="export-go"><Download className="w-3.5 h-3.5" /> {busy ? 'Preparing…' : 'Download CSV'}</button>
       </>}>
       <p className="text-xs text-slate-500 mb-2">A CSV file that Excel and Google Sheets open. Keep it safe: it has customers' numbers. The export is recorded (who and how many, not the data).</p>
       <div className="grid grid-cols-2 gap-1.5">
         {COLUMNS.map(([k, label]) => (
           <label key={k} className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={cols.includes(k)} onChange={e => setCols(c => (e.target.checked ? [...c, k] : c.filter(x => x !== k)))} /> {label}</label>
         ))}
+      </div>
+      <div className="mt-3 pt-3 border-t border-slate-100 space-y-1.5">
+        <label className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={customFields} onChange={e => setCustomFields(e.target.checked)} /> Customer fields (one column each)</label>
+        {isOwner ? (
+          <label className="flex items-start gap-1.5 text-sm"><input type="checkbox" checked={includePrivate} onChange={e => setIncludePrivate(e.target.checked)} className="mt-1" aria-label="Include private fields" />
+            <span>Include private fields <span className="block text-xs text-slate-500">Money, credit, ID or health details. Recorded in the activity log (how many, not the data).</span></span></label>
+        ) : <p className="text-xs text-slate-500">Private customer fields are left out (only the Business Admin can export them).</p>}
       </div>
     </Modal>
   );

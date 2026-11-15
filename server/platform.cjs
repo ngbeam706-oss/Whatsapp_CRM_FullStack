@@ -104,6 +104,26 @@ async function requirePlatformAdmin(req, res, next) {
 }
 
 /**
+ * The platform admin behind a token (same rules and cache as requirePlatformAdmin), or null. Throws when the login can't
+ * be checked. Used by the sign-in log (server/activity.cjs).
+ * @param {string} token @returns {Promise<PlatformAdmin | null>}
+ */
+async function platformAdminForToken(token) {
+  if (!token) return null;
+  const hit = loginCache.get(token);
+  if (hit && hit.expires > Date.now() && hit.pinned !== undefined) return hit.pinned;
+  let login = hit && hit.expires > Date.now() ? hit.login : undefined;
+  if (login === undefined) {
+    login = await lookupLogin(token);
+    loginCache.set(token, { login, expires: Date.now() + CACHE_MS });
+  }
+  if (!login) return null;
+  const row = await platformRow(login.id);
+  if ('error' in row) throw new Error('Could not check the platform login.');
+  return row.found && row.role ? { id: login.id, email: login.email || row.email || '', role: row.role } : null;
+}
+
+/**
  * Only these platform roles may use the route (after requirePlatformAdmin). The Platform Owner is always allowed.
  * @param {...PlatformRole} roles @returns {import('./types.cjs').Middleware}
  */
@@ -454,6 +474,7 @@ module.exports = {
   PLATFORM_ROLE_LABEL,
   isPlatformRole,
   requirePlatformAdmin,
+  platformAdminForToken,
   requirePlatformRole,
   forgetLogin,
   audit,

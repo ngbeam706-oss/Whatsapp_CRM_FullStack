@@ -45,6 +45,12 @@ const closeColumnsReady = () => Date.now() - closeColumnsMissingAt > 5 * 60000;
 async function leadQuery(build) {
   if (closeColumnsReady()) {
     // Names + returning columns (SQL 20261138) too, when they exist.
+    // The import markers (SQL 20261142) for the "Imported customer" badge, when they exist.
+    if (extraColumnsReady() && importFieldsReady()) {
+      const x = await dbRequest(build(`${LEAD_FIELDS},${CLOSE_FIELDS},${EXTRA_FIELDS},${IMPORT_FIELDS}`, true));
+      if (x.ok) { extraColumnsSeen = true; return x; }
+      importFieldsMissingAt = Date.now();
+    }
     if (extraColumnsReady()) {
       const x = await dbRequest(build(`${LEAD_FIELDS},${CLOSE_FIELDS},${EXTRA_FIELDS}`, true));
       if (x.ok) { extraColumnsSeen = true; return x; }
@@ -63,6 +69,10 @@ let extraColumnsMissingAt = 0;
 const extraColumnsReady = () => Date.now() - extraColumnsMissingAt > 5 * 60000;
 /** Seen working at least once (then search also looks at the WhatsApp name). */
 let extraColumnsSeen = false;
+// Customer import markers (SQL 20261142).
+const IMPORT_FIELDS = 'imported_at,import_id';
+let importFieldsMissingAt = 0;
+const importFieldsReady = () => Date.now() - importFieldsMissingAt > 5 * 60000;
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -154,17 +164,19 @@ async function staffEmails(biz) {
 
 /**
  * @param {string} biz
- * @param {{ filter?: string, stage?: string, q?: string, staffEmail?: string, number?: string, assignee?: string, extra?: any }} [options]
+ * @param {{ filter?: string, stage?: string, q?: string, staffEmail?: string, number?: string, assignee?: string, extra?: any, role?: string }} [options]
  *   extra: more filters (range, from, to, statusType, source, adId, tag, optedOut; server/leadsTools.cjs cleanFilters)
  *   number: only chats whose customer last wrote to this business number (Meta phone_number_id)
  *   assignee: only chats assigned to this team member (an email; the Inbox's "By person" filter)
  */
-async function listConversations(biz, { filter = 'all', stage = '', q = '', staffEmail = '', number = '', assignee = '', extra = {} } = {}) {
+async function listConversations(biz, { filter = 'all', stage = '', q = '', staffEmail = '', number = '', assignee = '', extra = {}, role = 'agent' } = {}) {
   const parts = [`business_id=eq.${requireBusinessId(biz)}`, 'order=last_contacted_at.desc.nullslast', 'limit=300'];
   // More filters (server/leadsTools.cjs): date range by last activity, status type, source, ad, tag, STOP.
   const lt = require('./leadsTools.cjs');
   const more = lt.cleanFilters(extra);
-  const added = await lt.filterParts(biz, { ...more, status: '', assignee: '', unread: false, number: '', q: '' });
+  // Customer-field filters too (D4): private ones only for managers + Business Admin; no free text in an address.
+  const added = await lt.filterParts(biz, { ...more, status: '', assignee: '', unread: false, number: '', q: '' }, { isManager: role === 'owner' || role === 'manager', allowText: false });
+  if (added.error !== undefined) return { error: added.error, status: added.status };
   parts.push(...added.parts);
   if (filter === 'mine') parts.push(`assigned_to=eq.${encodeURIComponent(String(staffEmail).toLowerCase())}`);
   const who = String(assignee || '').trim().toLowerCase();
@@ -198,8 +210,9 @@ async function listConversations(biz, { filter = 'all', stage = '', q = '', staf
   if (!res.ok) return { error: 'Could not load conversations. Has the Phase 4 SQL been run?' };
   if (filter === 'closed' && !closeColumnsReady()) return { conversations: [], note: 'Closing chats needs the inbox SQL (20261132).' };
   const now = Date.now();
+  const named = /** @type {Lead[]} */ (await require('./leadImport.cjs').withImportNames(biz, res.data));
   return {
-    conversations: res.data.map((/** @type {Lead} */ l) => ({ ...l, botPaused: isBotPaused(l, now), windowOpen: isWindowOpen(l.last_inbound_at, now) })),
+    conversations: named.map((/** @type {Lead} */ l) => ({ ...l, botPaused: isBotPaused(l, now), windowOpen: isWindowOpen(l.last_inbound_at, now) })),
   };
 }
 
@@ -225,9 +238,10 @@ async function getConversation(biz, phone) {
   ]);
   if (!lead) return { error: 'Contact not found.' };
   const now = Date.now();
+  const [named] = await require('./leadImport.cjs').withImportNames(biz, [lead]);
   return {
     contact: {
-      ...lead,
+      ...named,
       botPaused: isBotPaused(lead),
       windowOpen: isWindowOpen(lead.last_inbound_at),
       windowClosesAt: windowClosesAt(lead.last_inbound_at),
@@ -244,8 +258,8 @@ async function getConversation(biz, phone) {
   };
 }
 
-/** @param {string} biz */
-async function pipeline(biz) {
+/** @param {string} biz @param {string} [role]  decides which card fields (private ones: managers + Business Admin) */
+async function pipeline(biz, role = 'agent') {
   const id = requireBusinessId(biz);
   // Imported people who never chatted are not on the board (they would bury the real conversations).
   const notImported = (await require('./customFields.cjs').importColumnsReady(id)) ? `&${NOT_SILENT_IMPORT}` : '';
@@ -258,8 +272,11 @@ async function pipeline(biz) {
   /** @type {Record<string, Lead[]>} */
   const columns = Object.fromEntries(counts.map(c => [c.stage, []]));
   const entry = columns.new ? 'new' : counts[0]?.stage;
-  for (const l of res.data) (columns[l.stage] || columns[entry]).push(l);
-  return { stages: counts.map(c => c.stage), statuses: list.filter(s => s.key in columns), columns };
+  const leads = /** @type {Lead[]} */ (await require('./leadImport.cjs').withImportNames(id, res.data));
+  for (const l of leads) (columns[String(l.stage)] || columns[entry]).push(l);
+  // Up to 2 customer fields on each card (Settings -> Customer fields, "Show on Pipeline card").
+  const cards = await require('./customFields.cjs').cardValues(id, leads.map((/** @type {Lead} */ l) => String(l.phone)), role);
+  return { stages: counts.map(c => c.stage), statuses: list.filter(s => s.key in columns), columns, cards };
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +359,10 @@ async function ensureCanAct(phone, staff) {
     prefer: 'return=representation',
     body: { assigned_to: emailOf(staff) },
   });
-  if (claim.ok && claim.data?.length) return { lead: claim.data[0], claimed: true };
+  if (claim.ok && claim.data?.length) {
+    await require('./activity.cjs').byStaff(staff, 'chat.claimed', {}, { subjectPhone: phone });
+    return { lead: claim.data[0], claimed: true };
+  }
   // Someone else claimed it a moment ago.
   const now = await getLead(biz, phone);
   if (now && accessFor(now, staff) === 'mine') return { lead: now, claimed: false };
@@ -390,6 +410,7 @@ async function closeChat(phone, input, staff) {
   if (access.error !== undefined) return access;
   const res = await patchLead(biz, phone, { closed_at: new Date().toISOString(), closed_reason: reason, closed_by: emailOf(staff), close_note: note || null, unread_count: 0 });
   if (!res.ok || !res.data?.length) return { error: 'Could not close the chat. Has the inbox SQL (20261132) been run?' };
+  await require('./activity.cjs').byStaff(staff, 'chat.done', { reason, withNote: !!note }, { subjectPhone: phone });
   return { contact: res.data[0] };
 }
 
@@ -401,6 +422,7 @@ async function reopenChat(phone, staff) {
   if (access.error !== undefined) return access;
   const res = await patchLead(biz, phone, { closed_at: null, closed_reason: null, closed_by: null, close_note: null });
   if (!res.ok || !res.data?.length) return { error: 'Could not reopen the chat.' };
+  await require('./activity.cjs').byStaff(staff, 'chat.reopened', {}, { subjectPhone: phone });
   return { contact: res.data[0] };
 }
 
@@ -551,6 +573,8 @@ async function updateContact(phone, input = {}, staff) {
   let prevStage = null;
   /** The contact before this change (for clearing a saved name). @type {any} */
   let prevLead = null;
+  /** Who had the chat before a transfer (Activity log). @type {string | null} */
+  let prevAssignee = null;
 
   if ('assignedTo' in input) {
     const email = input.assignedTo ? String(input.assignedTo).toLowerCase().trim() : null;
@@ -560,6 +584,7 @@ async function updateContact(phone, input = {}, staff) {
     const denied = transferDenied(lead, staff, email);
     if (denied) return forbidden(denied, { assignedTo: lead.assigned_to });
     body.assigned_to = email;
+    prevAssignee = lead.assigned_to ? String(lead.assigned_to).toLowerCase() : null;
   } else if (editsOtherThanAssignee) {
     const access = await ensureCanAct(phone, staff);
     if (access.error !== undefined) return access;
@@ -608,11 +633,36 @@ async function updateContact(phone, input = {}, staff) {
   // A booking from a Click-to-WhatsApp ad is reported to Meta (if switched on; never fails this change).
   if (body.stage) await require('./adConversions.cjs').onStage(biz, res.data[0], String(body.stage));
   if (body.stage) await require('./statusHistory.cjs').record(biz, [{ phone, from: prevStage, to: String(body.stage) }], { by: staff.email, source: 'staff' });
+  await logContactChanges(staff, phone, input, body, prevLead, prevAssignee);
   // Handed to someone else: their dashboard gets an alert (never fails this change).
   if (body.assigned_to && body.assigned_to !== emailOf(staff)) {
     try { await require('./inboxAlerts.cjs').onAssigned(biz, String(body.assigned_to)); } catch { /* alerts are best effort */ }
   }
   return { contact: res.data[0] };
+}
+
+/**
+ * Activity log entries for a contact change (transfer, bot pause, rename, tags). No names or other content: a rename
+ * records only that it happened; tags are the business's own labels.
+ * @param {Staff} staff @param {string} phone @param {Record<string, any>} input @param {Record<string, any>} body
+ * @param {any} prevLead @param {string | null} prevAssignee
+ */
+async function logContactChanges(staff, phone, input, body, prevLead, prevAssignee) {
+  const activity = require('./activity.cjs');
+  const o = { subjectPhone: phone };
+  if ('assignedTo' in input && (body.assigned_to || null) !== prevAssignee) {
+    await activity.byStaff(staff, 'chat.transferred', { from: prevAssignee, to: body.assigned_to || null }, o);
+  }
+  if ('botPaused' in input) await activity.byStaff(staff, 'chat.bot_paused', { paused: !!input.botPaused, ...(input.botPaused && Number(input.pauseHours) > 0 ? { hours: Math.min(Number(input.pauseHours), 720) } : {}) }, o);
+  if ('name' in input) await activity.byStaff(staff, 'lead.renamed', { cleared: !String(input.name ?? '').trim() }, o);
+  if ('tags' in input) {
+    /** @type {string[]} */
+    const before = Array.isArray(prevLead?.tags) ? prevLead.tags.map(String) : [];
+    /** @type {string[]} */
+    const after = Array.isArray(body.tags) ? body.tags.map(String) : [];
+    const added = after.filter(t => !before.includes(t)), removed = before.filter(t => !after.includes(t));
+    if (added.length || removed.length) await activity.byStaff(staff, 'lead.tags_changed', { added, removed }, o);
+  }
 }
 
 /**
@@ -689,6 +739,7 @@ async function addNote(phone, body, staff) {
   if (access.error !== undefined) return access;
   const res = await dbRequest('lead_notes', { method: 'POST', prefer: 'return=representation', body: { business_id: staff.businessId, phone, author: staff.email, body: text } });
   if (!res.ok) return { error: 'Could not save the note.' };
+  await require('./activity.cjs').byStaff(staff, 'lead.note_added', {}, { subjectPhone: phone }); // never the note text
   return { note: res.data[0] };
 }
 

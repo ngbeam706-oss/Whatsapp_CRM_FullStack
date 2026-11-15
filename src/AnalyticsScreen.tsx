@@ -10,7 +10,7 @@ import { LoadError, SkeletonCards, SkeletonRows } from './ui';
 // ---- What /api/analytics returns (server/analytics.cjs report) ----
 type Num = number | null | undefined;
 interface Kpis {
-  newLeads: number; returningLeads?: number; activeChats: number; customerMessages: number; staffReplies: number; automatedReplies: number;
+  newLeads: number; returningLeads?: number; importedPeople?: number; adChatsExisting?: number; adChatsNew?: number; activeChats: number; customerMessages: number; staffReplies: number; automatedReplies: number;
   orderEnquiries: number; newLeadConversion: number | null; medianStaffResponseMin: number | null;
   unassignedNow: number; unreadNow: number;
 }
@@ -217,6 +217,8 @@ function KpiGrid({ k, days }: { k: Kpis; days: number }) {
     ['Staff response time', fmtMinutes(k.medianStaffResponseMin), 'median, to a waiting customer'],
     ['Unassigned now', fmtNum(k.unassignedNow), 'chats nobody has picked up'],
     ['Unread now', fmtNum(k.unreadNow), 'customer messages not yet opened'],
+    // Customer import D3: ad chats from people already in your records vs new people (shown once there is an import or an ad chat).
+    ...((k.importedPeople || k.adChatsExisting || k.adChatsNew) ? [['Ad chats: existing vs new', `${fmtNum(k.adChatsExisting || 0)} / ${fmtNum(k.adChatsNew || 0)}`, `existing customers / new people${k.importedPeople ? ` · ${fmtNum(k.importedPeople)} imported in ${days} days` : ''}`]] : []),
   ];
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

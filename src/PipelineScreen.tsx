@@ -4,6 +4,7 @@ import AddLeadModal from './AddLeadModal';
 import { ReturnedBadge, RenameButton } from './leadNames';
 import { useRenameLead } from './leadNameUtils';
 import { api, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonBoard, EmptyState } from './ui';
 import { REFRESH } from './usePolling';
 import { useApi, refreshApi, setApiData, errorOf } from './queryClient';
 import { avatarBg, displayName, initials, emailInitials, shortTime, accessOf } from './crmUtils';
@@ -77,10 +78,13 @@ export default function PipelineScreen({ onOpenChat, showToast }: Props) {
       </div>
       {adding && <AddLeadModal me={me} showToast={showToast} onClose={() => setAdding(false)} onAdded={(phone) => { setAdding(false); onOpenChat(phone); }} />}
 
-      {error && <div className="m-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-      {!data && !error && <div className="p-6 text-sm text-slate-500">Loading…</div>}
+      {error && <LoadError className="m-4" error={error} onRetry={load} />}
+      {!data && !error && <SkeletonBoard label="Loading the pipeline" />}
 
-      {data && (
+      {data && total === 0 && (
+        <div className="p-4"><EmptyState icon={Kanban} title="No contacts yet" text="New WhatsApp chats and the leads you add show here, one column per status." action={<button onClick={() => setAdding(true)} className={btnSecondary}><UserPlus className="w-3.5 h-3.5" /> Add lead</button>} /></div>
+      )}
+      {data && total > 0 && (
         // Phones: one status at a time (chips above); dragging is replaced by each card's "Move to" menu.
         <nav aria-label="Stages" className="md:hidden flex gap-1.5 overflow-x-auto px-3 pt-3" data-testid="stage-chips">
           {keys.map(s => {
@@ -95,7 +99,7 @@ export default function PipelineScreen({ onOpenChat, showToast }: Props) {
           })}
         </nav>
       )}
-      {data && (
+      {data && total > 0 && (
         <div className="flex-1 overflow-x-auto overflow-y-hidden">
           <div className="flex gap-3 p-3 md:p-4 h-full md:min-w-max">
             {keys.map(stage => {

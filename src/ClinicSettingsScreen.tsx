@@ -3,7 +3,7 @@ import { Stethoscope, UserPlus, Save, CreditCard, Copy, PlugZap } from 'lucide-r
 import { api, errorMessage, inputCls, inputInlineCls } from './broadcastUtils';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import { useConfirm } from './confirm';
-import { BUTTON, Card, PageHeader, SkeletonRows } from './ui';
+import { BUTTON, Card, PageHeader, SkeletonRows, LoadError } from './ui';
 import { rupees, type Doctor } from './clinicUtils';
 import type { ShowToast } from './types';
 
@@ -66,7 +66,7 @@ function Doctors({ showToast }: { showToast: ShowToast }) {
   };
   return (
     <Card title="Doctors">
-      {!q.data ? (errorOf(q) ? <p className="text-xs text-red-700">{errorOf(q)}</p> : <SkeletonRows rows={2} />) : (
+      {!q.data ? (errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : <SkeletonRows rows={2} />) : (
         <ul className="divide-y divide-slate-100" aria-label="Doctors">
           {!q.data.doctors.length && <li className="py-2 text-sm text-slate-500">No doctors yet.</li>}
           {q.data.doctors.map(d => {
@@ -133,7 +133,7 @@ function Razorpay({ isOwner, showToast }: { isOwner: boolean; showToast: ShowToa
   };
   return (
     <Card title={<span className="flex items-center gap-2"><CreditCard className="w-4 h-4" /> Online payments (Razorpay)</span>}>
-      {!r ? (errorOf(q) ? <p className="text-xs text-red-700">{errorOf(q)}</p> : <SkeletonRows rows={2} />) : (
+      {!r ? (errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : <SkeletonRows rows={2} />) : (
         <div className="space-y-3 text-sm">
           <p className="text-slate-600">Patients pay into your own Razorpay account. The CRM only creates the link and hears back when it is paid; it never holds the money or sees card details.</p>
           <div className={`p-2 rounded-lg text-xs ${r.connected ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-50 text-slate-600'}`}>

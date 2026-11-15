@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ClipboardCheck, CheckCircle2, Circle, MinusCircle, Mail, Info } from 'lucide-react';
 import { api, errorMessage, inputInlineCls, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonRows } from './ui';
 import type { ShowToast } from './types';
 
 interface Step { id: string; label: string; done: boolean | null }
@@ -48,8 +49,8 @@ export default function PlatformOnboarding({ showToast, onOpenBusiness }: { show
         </select>
       </div>
       <p className="text-xs text-slate-500 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 flex-shrink-0 mt-px" /> Each business's setup steps, done or not. You never see their chats, contacts or bot text.</p>
-      {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-      {!rows && !error && <div className="text-sm text-slate-500">Loading…</div>}
+      {error && <LoadError error={error} onRetry={load} />}
+      {!rows && !error && <SkeletonRows rows={4} label="Loading" />}
       {rows && shown.length === 0 && <div className="bg-white border border-dashed border-slate-300 rounded-xl p-6 text-center text-sm text-slate-500">{onlyOpen ? 'Every new business has finished setting up.' : 'No business was created in this period.'}</div>}
       <div className="grid gap-2">
         {shown.map(b => (

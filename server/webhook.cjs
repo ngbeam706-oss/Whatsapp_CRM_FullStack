@@ -34,10 +34,21 @@ const HANDOVER_IDS = new Set(['btn_talk_staff', 'row_talk_nutritionist', 'row_ta
  * @returns {Promise<{ ok: boolean, lead: any }>}
  */
 async function loadContact(biz, phone) {
-  const res = await dbRequest(`whatsapp_leads?select=phone,stage,bot_paused,bot_paused_until,last_inbound_at,assigned_to&business_id=eq.${biz}&phone=eq.${encodeURIComponent(phone)}`);
+  const path = (/** @type {string} */ cols) => `whatsapp_leads?select=${cols}&business_id=eq.${biz}&phone=eq.${encodeURIComponent(phone)}`;
+  const base = 'phone,stage,bot_paused,bot_paused_until,last_inbound_at,assigned_to';
+  // With the import markers (SQL 20261142) when they exist.
+  let res = await dbRequest(path(`${base},imported_at,last_contacted_at`));
+  if (!res.ok) res = await dbRequest(path(base));
   if (!res.ok || !Array.isArray(res.data)) return { ok: false, lead: null };
   return { ok: true, lead: res.data[0] || null };
 }
+
+/**
+ * A new chat: no contact yet, or an imported person writing for the first time (imported, never contacted). They get
+ * what any new chat gets: the "new contact" follow-up event, a new-chat alert, STOP re-check, lead assignment.
+ * @param {{ ok: boolean, lead: any }} before
+ */
+const isNewChat = (before) => before.ok && (!before.lead || (!!before.lead.imported_at && !before.lead.last_contacted_at));
 
 /**
  * Turn what the customer just did into contact events (follow-ups) and pipeline moves.
@@ -287,7 +298,7 @@ async function handleIncomingMessage(biz, msg, value, contactName, receivedAt, n
   broadcastEvent('message', item, biz);
   let before = { ok: false, lead: null };
   try { before = await loadContact(biz, msg.from); } catch { /* treat as existing */ }
-  const isNew = before.ok && !before.lead;
+  const isNew = isNewChat(before);
   await logMessage(biz, item);
   await logLead(biz, item.sender, item.senderName, item.body, item.source, item.referral);
   // A number whose lead was deleted after it replied STOP comes back opted out (server/leadsTools.cjs).
@@ -296,7 +307,7 @@ async function handleIncomingMessage(biz, msg, value, contactName, receivedAt, n
   try { await inbox.onInbound(biz, msg.from, numberId); } catch (err) { console.error('[Inbox unread error]', err); }
   // Back after a long silence (server/returningLeads.cjs): status by type, owner re-checked. Uses the lead as it was
   // BEFORE this message (its previous customer message).
-  if (before.ok && before.lead) await require('./returningLeads.cjs').apply(biz, msg.from, before.lead, { numberId });
+  if (before.ok && before.lead && !isNew) await require('./returningLeads.cjs').apply(biz, msg.from, before.lead, { numberId });
   // Rotation (server/leadAssignment.cjs): an unassigned chat goes to the next available person. Off = no change.
   await require('./leadAssignment.cjs').assignIfDue(biz, msg.from, { numberId });
   // Alert the team's open dashboards (no name, number or text in the alert; never stops the message).
@@ -418,4 +429,4 @@ async function handleWebhookEvent(req, res) {
   }
 }
 
-module.exports = { resolveWebhookBusiness, verifyMetaSignature, isValidSignature, handleWebhookVerification, handleWebhookEvent, mediaOf, describeMessage };
+module.exports = { resolveWebhookBusiness, verifyMetaSignature, isValidSignature, handleWebhookVerification, handleWebhookEvent, mediaOf, describeMessage, isNewChat };

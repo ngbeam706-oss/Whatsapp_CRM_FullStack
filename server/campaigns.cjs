@@ -462,6 +462,8 @@ async function processBatches({ deadlineMs = 8000, batchSize = 25, concurrency =
       pushMessage(item, biz);
       broadcastEvent('message', item, biz);
       await logMessage(biz, item);
+      // An imported person who was never contacted counts as contacted from now on (server/leadImport.cjs).
+      await require('./leadImport.cjs').markContacted(biz, String(r.phone));
     });
     for (const [biz, n] of sentBy) await limits.addUsage(biz, 'broadcasts', n);
 

@@ -398,11 +398,14 @@ async function draftReply({ businessId, phone, catalog }) {
   const rows = await recentHistory(businessId, phone);
   if (!rows.length) return { error: 'No messages in this chat yet.' };
   const transcript = rows.map(r => `${r.direction === 'inbound' ? 'Customer' : 'Business'}: ${String(r.body || '').slice(0, 600)}`).join('\n');
+  // The customer's NORMAL details (server/customFields.cjs aiFacts): private fields are never given to the AI.
+  const facts = await require('./customFields.cjs').aiFactsFor(businessId, phone);
+  const known = facts ? `What our records say about this customer (use only if it helps; never repeat numbers they did not ask about):\n${facts}\n\n` : '';
   const result = await callModel(businessId, {
     system: systemPrompt(catalog, settings, await activeRules(businessId)),
     messages: [{
       role: 'user',
-      content: `Here is the recent WhatsApp conversation with a customer:\n\n${transcript}\n\nWrite the next message our staff member should send, following the rules above. A person will review and send it, so do not hand over: if the information doesn't cover something, write a polite reply that says the team will check and get back. Reply with the message text only.`,
+      content: `${known}Here is the recent WhatsApp conversation with a customer:\n\n${transcript}\n\nWrite the next message our staff member should send, following the rules above. A person will review and send it, so do not hand over: if the information doesn't cover something, write a polite reply that says the team will check and get back. Reply with the message text only.`,
     }],
     timeoutMs: DRAFT_TIMEOUT_MS,
   });

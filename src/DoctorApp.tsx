@@ -6,7 +6,7 @@ import { BrandLogo } from './BrandMark';
 import { api, errorMessage, inputCls, inputInlineCls } from './broadcastUtils';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import { useConfirm } from './confirm';
-import { BUTTON, Card, EmptyState, PageHeader, SkeletonRows } from './ui';
+import { BUTTON, Card, EmptyState, LoadError, PageHeader, SkeletonForm, SkeletonRows } from './ui';
 import { addDays, APPT_STATUS, dayLabel, patientLine, shrinkPhoto, timeOf, todayIst, WEEKDAYS, type PastVisit, type Patient, type Sheet } from './clinicUtils';
 
 interface QueueItem { id: string; patientName: string; startsAt: string; endsAt: string; status: 'confirmed' | 'completed' | 'no_show'; note: string; reason: string; followUpOn: string | null }
@@ -64,7 +64,6 @@ const STATUS: Record<QueueItem['status'], { label: string; cls: string }> = {
   completed: { label: 'Seen', cls: 'bg-emerald-50 text-emerald-800' },
   no_show: { label: 'No-show', cls: 'bg-slate-100 text-slate-600' },
 };
-const Err = ({ text }: { text: string }) => <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700" role="alert">{text}</div>;
 
 function Queue({ base }: { base: string }) {
   const [day, setDay] = useState(todayIst());
@@ -79,7 +78,7 @@ function Queue({ base }: { base: string }) {
         <button className={BUTTON.secondary} onClick={() => setDay(addDays(day, 1))} aria-label="Next day"><ChevronRight className="w-4 h-4" /></button>
         <span className="text-sm text-slate-600">{dayLabel(day)}</span>
       </div>
-      {!list ? (errorOf(q) ? <Err text={errorOf(q)} /> : <SkeletonRows rows={3} />)
+      {!list ? (errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : <SkeletonRows rows={3} />)
         : !list.length ? <EmptyState icon={CalendarDays} title="No appointments" text="Nobody is booked with you on this day yet." />
           : (
             <ul className="space-y-2" aria-label="Appointments">
@@ -171,7 +170,7 @@ function Visit({ base }: { base: string }) {
     setBusy(true); setMsg(null);
     try { await fn(); await refreshApi(path); await refreshApi('/api/doctor/appointments?'); setMsg({ ok: true, text: ok }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } finally { setBusy(false); }
   };
-  if (!q.data) return <main className="max-w-4xl mx-auto px-4 py-5">{errorOf(q) ? <Err text={errorOf(q)} /> : <SkeletonRows rows={5} />}</main>;
+  if (!q.data) return <main className="max-w-4xl mx-auto px-4 py-5">{errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : <SkeletonRows rows={5} />}</main>;
   const { visit: v, patient, history } = q.data;
   const form = fu || { date: v.followUpOn || '', note: v.followUpNote || '' };
   const upload = async (files: FileList | null) => {
@@ -232,7 +231,7 @@ function Patients({ base }: { base: string }) {
         <Search className="w-4 h-4 text-slate-400" />
         <input value={term} onChange={e => setTerm(e.target.value)} placeholder="Search by name" className="flex-1 py-2 text-sm outline-none" aria-label="Search patients" />
       </label>
-      {!list ? (errorOf(q) ? <Err text={errorOf(q)} /> : <SkeletonRows rows={4} />)
+      {!list ? (errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : <SkeletonRows rows={4} />)
         : !list.length ? <EmptyState icon={Users} title={term ? 'No match' : 'No patients yet'} text={term ? 'Try another name.' : 'Patients appear here after their first paid visit with you.'} />
           : (
             <ul className="space-y-2" aria-label="Patients">
@@ -261,7 +260,7 @@ function PatientFile({ base }: { base: string }) {
   return (
     <main className="max-w-4xl mx-auto px-4 py-5 space-y-4" data-testid="patient-file">
       <button className={BUTTON.quiet} onClick={() => navigate(`${base}/patients`)}><ArrowLeft className="w-4 h-4" /> My patients</button>
-      {!q.data ? (errorOf(q) ? <Err text={errorOf(q)} /> : <SkeletonRows rows={5} />) : (
+      {!q.data ? (errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : <SkeletonRows rows={5} />) : (
         <>
           <PatientCard p={q.data.patient} name={q.data.patient.name} />
           <History visits={q.data.visits} title="Visits" />
@@ -278,7 +277,7 @@ function HoursEditor() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [offDay, setOffDay] = useState('');
   if (!q.data) {
-    return <main className="max-w-4xl mx-auto px-4 py-5"><PageHeader icon={Clock} title="My hours" />{errorOf(q) ? <Err text={errorOf(q)} /> : <SkeletonRows rows={4} />}</main>;
+    return <main className="max-w-4xl mx-auto px-4 py-5"><PageHeader icon={Clock} title="My hours" />{errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : <SkeletonForm fields={7} label="Loading your hours" />}</main>;
   }
   const form = draft || q.data;
   const set = (patch: Partial<Hours>) => setDraft({ ...form, ...patch });

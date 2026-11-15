@@ -1,7 +1,7 @@
 # UI enhancement (all roles)
 
-**Status:** U0–U4 LIVE 2026-11-13 (deploy 6af6b305, by another session with the ads retry fix); U5 built 2026-11-13, not deployed; U6 optional
-**Last updated:** 2026-11-13
+**Status:** U0–U4 LIVE 2026-11-13 (deploy 6af6b305, by another session with the ads retry fix); U5 built 2026-11-13, not deployed; loading states + lazy loading built 2026-11-15, not deployed; U6 optional
+**Last updated:** 2026-11-15
 
 ## Goal
 Make the dashboard comfortable for each role: easier to read, fewer clicks for daily work, clear "what needs me
@@ -227,8 +227,74 @@ from a phone; dark mode and Telugu/Hindi later (U6).
   - Tests: e2e new "U5 Platform console" test (groups, badges, tiles, filter from a tile, search, sort, name ->
     drawer). 456 unit tests, mocked e2e 47/47.
 
+### Loading states and lazy loading (built 2026-11-15, not deployed, not committed)
+Goal: no screen ever shows a blank area while loading; every load has a skeleton shaped like its content,
+a visible error with "Try again", and an empty state where relevant.
+- **UI kit** (`src/ui.tsx`): `Skeleton`, `SkeletonRows` (now with `data-testid="skeleton"`), `SkeletonCards`
+  (number tiles), `SkeletonForm` (settings forms), `SkeletonTable`, `SkeletonBoard` (Pipeline), `SkeletonChat` /
+  `SkeletonConversation` (Inbox), `SkeletonPage({ kind })` (whole screen: list / cards / form / table / board /
+  chat), `AppFrameSkeleton` (top bar + side menu, for whole areas), `SiteSkeleton` (public site),
+  `DialogLoading` (pop-up whose code is downloading), `LoadError({ error, onRetry })` (reason + "Try again",
+  busy while retrying, `data-testid="load-error"`), `Spinner`. Every skeleton is `role="status"` with a label
+  and pulses only with `motion-safe:` (off when the system asks for less motion).
+- **Route fallbacks**: no `fallback={null}` left. `main.tsx`: the dashboard is lazy now (visitors of the public
+  site never download it), fallback `AppFrameSkeleton`; public site fallback `SiteSkeleton`. `Dashboard.tsx`:
+  Platform console and doctor area fall back to `AppFrameSkeleton`. `App.tsx`: each screen route has its own
+  Suspense with a skeleton shaped like the screen (`SKELETON_OF`: Home / Analytics / Ads = cards, Inbox = chat,
+  Pipeline = board, Leads = table, settings forms = form, others = rows). `ScreenLoading` (ErrorBoundary.tsx) is
+  now `SkeletonPage`.
+- **Sign-in** (`AuthGate.tsx`): "Checking your sign-in…" shows inside the app frame skeleton with a spinner. A
+  failed staff lookup (network) now shows "Could not check your sign-in" + "Try again" instead of the wrong
+  "No dashboard access".
+- **Bot pages** (App.tsx): a failed `/api/bot-catalog` or `/api/bot-rules` load shows "Try again" instead of an
+  empty editor (which could have saved over the real bot); Auto-replies waits for the rules (skeleton).
+- **Lazy loading** (build sizes, `npm run build`, before -> after):
+
+  | Chunk | Before | After |
+  |---|---|---|
+  | `main` (first download on every page) | 267.8 kB (gzip 74.6) | 65.5 kB (gzip 21.7) |
+  | `Dashboard` (signed-in areas, new chunk) | in main | 91.3 kB (gzip 26.6) |
+  | `InboxScreen` (was in main) | in main | 69.8 kB (gzip 18.8) |
+  | `AdsScreen` | 193.7 kB (gzip 50.2) | 54.6 kB (gzip 15.1) |
+  | `AdsCreateReady` + wizard / `MetaOrgGuide` / `AdsManage` / `AdConversions` (Ads tabs, lazy) | in AdsScreen | 83.8 / 36.0 / 13.8 / 7.3 kB |
+  | `PlatformConsole` | 96.5 kB (gzip 23.3) | 61.9 kB (gzip 15.2) |
+  | Platform tabs Signups / Branding / Team / Onboarding / Support (lazy) | in console | 6.0 / 12.0 / 5.0 / 4.4 / 9.7 kB |
+  | Raise a query / Data and sync / Webhook pop-ups (lazy, `DialogLoading`) | in main | 5.3 / 6.8 / 2.6 kB |
+
+  Kept eager on purpose: `CallModal` and `WhatsAppCallPanel` (an incoming call must ring at once).
+
+Per role, what changed:
+
+| Role / area | Screens | Loading | Error + retry | Empty state |
+|---|---|---|---|---|
+| Sign-in | AuthGate | app frame + "Checking your sign-in…" | network failure -> "Try again" | – |
+| Agent | Home | tiles + rows (team panel rows) | `LoadError` (both panels) | "All caught up" (existing) |
+| | Inbox | chat-list rows (was "No conversations here" while loading), conversation bubbles (was "Loading…") | list + open chat | existing per filter |
+| | Pipeline | column board (was "Loading…") | yes | new "No contacts yet" + Add lead |
+| | Queries | rows, insights tiles, settings form (was "Loading…"; settings never left "Loading…" on failure) | list, insights, settings | `EmptyState` "No queries here" |
+| | Query panel, customer queries in chat | rows (was "Loading…") | panel closes with the reason (existing); chat card retries | existing |
+| | Appointments (hospitals) | rows (existing) | `LoadError` now with retry | existing |
+| | My profile | tiles + form (was "Loading…") | yes | – |
+| Manager / Business Admin | Leads | table skeleton | yes | existing "No leads match" |
+| | Broadcasts (campaigns, templates, automations, details) | rows (list was blank while loading) | yes (details also keep "Back") | existing texts |
+| | Analytics | tiles + rows (was "Loading…") | yes | – |
+| | Ads (results, manage, funnel, create, conversions, guide) | tiles + rows; each tab lazy with rows | yes on every tab | new "No ad results yet" |
+| | Settings: setup, WhatsApp (+ numbers), team (+ performance, member), lead statuses, lead assignment, clinic, AI, business details | rows / form skeletons (numbers card was blank) | yes | existing |
+| | Settings: bot flow, auto-replies | form / rows while the bot loads | yes (new) | existing |
+| Doctor | My appointments, visit page, My patients, patient file, My hours | rows; hours = form | `LoadError` with retry everywhere (was text only) | existing |
+| Platform (all roles) | console frame, Health/overview, Businesses, Sign-ups, Onboarding, Plans, Support (+ query panel), Events, Worker, Delivery, Audit, Branding, Maintenance, Team, business drawer | app frame while the role loads; tiles / rows / forms (Events, Worker, Delivery, Audit, Maintenance were blank) | every panel, and the console's own role check | existing |
+
+- **Busy buttons**: almost every save already showed "Saving…" + disabled; fixed WhatsApp numbers "Save welcome".
+  Not changed: the Bot Flow editors save through App's fire-and-forget handlers (toast on result).
+- **Tests**: e2e `mocked.spec.js` "loading states" × 5 (agent: sign-in check, Home, Inbox list, open chat,
+  Pipeline; manager: lazy screen code fallback, failed load -> "Try again" works, Leads table + empty state,
+  WhatsApp settings form; sign-in check failure -> retry; doctor; platform console). They hold an address
+  with `holdRoute()` and assert the skeleton, then release it. The "every tab" smoke test and the settings-area
+  test also wait for skeletons to finish.
+
 ## Next
-- [ ] Deploy U5 (ask first).
+- [ ] Deploy U5 + loading states (ask first).
+- [ ] Optional: Bot Flow save buttons with a busy state (needs the save handlers in App.tsx to return promises).
 - [ ] User report 2026-11-13: "navigating to another page opens a new tab". Not reproduced: app links have no
       new-tab target (only links to Meta / files do), live public pages and every e2e menu click stay in one
       tab, no service worker. Waiting for which page / link / browser.

@@ -1,6 +1,7 @@
 import React, { type ReactNode } from 'react';
 import { AlertTriangle, RotateCw } from 'lucide-react';
 import { apiFetch } from './apiClient';
+import { SkeletonPage, type SkeletonKind } from './ui';
 
 interface ErrorBoundaryProps {
   /** Which screen this guards (shown in the report). */
@@ -102,7 +103,7 @@ export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, E
   }
 }
 
-/** Shown while a screen's code is downloading (screens load on first open). */
-export function ScreenLoading() {
-  return <div className="flex-1 flex items-center justify-center text-sm text-slate-500">Loading…</div>;
+/** Shown while a screen's code is downloading (screens load on first open): a skeleton shaped like the screen. */
+export function ScreenLoading({ kind = 'list' }: { kind?: SkeletonKind }) {
+  return <SkeletonPage kind={kind} label="Loading the page" />;
 }

@@ -5,6 +5,7 @@ import { STAGE_INFO } from './crmUtils';
 import { AdsFunnelSummary } from './AdsFunnel';
 import type { BusinessNumber, Stage } from './types';
 import { useBusinessNumbers, numberName } from './inboxNumbers';
+import { LoadError, SkeletonCards, SkeletonRows } from './ui';
 
 // ---- What /api/analytics returns (server/analytics.cjs report) ----
 type Num = number | null | undefined;
@@ -107,8 +108,8 @@ export default function AnalyticsScreen() {
           </div>
         </div>
 
-        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-        {!data && !error && <div className="text-sm text-slate-500">Loading…</div>}
+        {error && <LoadError error={error} onRetry={load} />}
+        {!data && !error && <><SkeletonCards count={4} label="Loading analytics" /><SkeletonRows rows={3} label="Loading analytics" /></>}
 
         {data && (
           <>

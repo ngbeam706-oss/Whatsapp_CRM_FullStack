@@ -3,6 +3,7 @@ import { useConfirm } from './confirm';
 import { Users, Trash2, ShieldCheck, Mail, Briefcase, Trophy, X, ChevronRight, BarChart3, KeyRound, IdCard, Pencil, Lock } from 'lucide-react';
 import { StaffDetailsFields, StaffDetailsView, changedDetails, DETAIL_KEYS, type StaffDetails } from './StaffDetailsFields';
 import { api, inputInlineCls } from './broadcastUtils';
+import { LoadError, SkeletonCards, SkeletonRows } from './ui';
 import { AddMember, SetPasswordDialog } from './TeamPasswords';
 import { canSetPassword } from './teamPasswordRules';
 import { useApi, refreshApi, errorOf } from './queryClient';
@@ -65,7 +66,7 @@ export default function TeamScreen({ showToast }: { showToast: ShowToast }) {
           {tabBtn('performance', 'Performance & ranking', <BarChart3 className="w-4 h-4" />)}
         </div>
 
-        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
+        {error && <LoadError error={error} onRetry={() => teamQuery.refetch()} />}
         {tab === 'members' && <Members team={team} error={error} showToast={showToast} onOpen={setOpenId} />}
         {tab === 'performance' && <Performance days={days} onOpen={setOpenId} />}
       </div>
@@ -112,7 +113,7 @@ function Members({ team, error, showToast, onOpen }: { team: TeamResponse | null
       {passwordFor && <SetPasswordDialog member={passwordFor} onClose={() => setPasswordFor(null)} showToast={showToast} />}
 
       <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
-        {!team && !error && <div className="p-4 text-sm text-slate-500">Loading…</div>}
+        {!team && !error && <div className="p-4"><SkeletonRows rows={4} label="Loading the team" /></div>}
         {team?.staff.map(m => {
           const isMe = m.user_id === team.me.id;
           return (
@@ -171,8 +172,8 @@ function Performance({ days, onOpen }: { days: number; onOpen: (id: string) => v
   const error = errorOf(q);
   const [sort, setSort] = useState<SortKey>('rank');
 
-  if (error) return <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>;
-  if (!data) return <div className="text-sm text-slate-500">Loading…</div>;
+  if (error) return <LoadError error={error} onRetry={() => q.refetch()} />;
+  if (!data) return <><SkeletonCards count={4} label="Loading team performance" /><SkeletonRows rows={4} label="Loading team performance" /></>;
 
   const rows = [...data.members].sort((a, b) => {
     if (sort === 'rank') return a.rank - b.rank;
@@ -337,8 +338,8 @@ function MemberDrawer({ userId, days, onDays, onClose }: { userId: string; days:
           </div>
         </div>
         <div className="p-4 space-y-4">
-          {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-          {!m && !error && <div className="text-sm text-slate-500">Loading…</div>}
+          {error && <LoadError error={error} onRetry={() => q.refetch()} />}
+          {!m && !error && <SkeletonRows rows={4} label="Loading" />}
           {m && data && (
             <>
               <div className="bg-white border border-slate-200 rounded-xl p-4">

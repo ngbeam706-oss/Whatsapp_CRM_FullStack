@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { IndianRupee, CalendarCheck, UserCheck, UserX, Clock, XCircle, Percent } from 'lucide-react';
 import { inputInlineCls } from './broadcastUtils';
 import { useApi, errorOf } from './queryClient';
-import { Card, EmptyState, SkeletonRows } from './ui';
+import { Card, EmptyState, SkeletonRows, LoadError } from './ui';
 import { addDays, dayLabel, PAY_METHOD, rupees, timeOf, todayIst } from './clinicUtils';
 
 interface Report {
@@ -56,7 +56,7 @@ export default function ClinicCollections() {
       </div>
 
       {/* A refused range (e.g. over 92 days) shows its error, never the previous range's figures. */}
-      {errorOf(q) ? <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700" role="alert">{errorOf(q)}</div> : !r ? <SkeletonRows rows={4} /> : (
+      {errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : !r ? <SkeletonRows rows={4} /> : (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
             {stat(IndianRupee, 'Collected', rupees(r.totals.collected), 'text-emerald-700', `${r.totals.payments} payment${r.totals.payments === 1 ? '' : 's'}${r.totals.discount ? ` · ${rupees(r.totals.discount)} discount` : ''}`)}

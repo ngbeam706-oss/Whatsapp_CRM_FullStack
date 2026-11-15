@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useConfirm } from './confirm';
 import { Sparkles, Save, Send, AlertTriangle, ShieldCheck, Hand, MessageSquare, KeyRound, PlugZap, Trash2, CheckCircle2 } from 'lucide-react';
 import { api, errorMessage, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonForm } from './ui';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import AiModeToggle, { type AiProviderStatus, type AiSettingsResponse } from './AiModeToggle';
 import type { ShowToast } from './types';
@@ -87,8 +88,8 @@ export default function AiAssistantScreen({ showToast }: { showToast: ShowToast 
           <p className="text-xs text-slate-500">When switched on, answers customers' typed messages on WhatsApp using your menu, keyword replies, bot flow messages and the information below, and hands anything tricky to your team.</p>
         </div>
 
-        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-        {!data && !error && <div className="text-sm text-slate-500">Loading…</div>}
+        {error && <LoadError error={error} onRetry={() => settings.refetch()} />}
+        {!data && !error && <SkeletonForm fields={4} label="Loading AI settings" />}
 
         {data && !configured && (
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 flex gap-2">

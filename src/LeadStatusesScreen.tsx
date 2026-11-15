@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Tags, Plus, ArrowUp, ArrowDown, Trash2, Eye, EyeOff, Info } from 'lucide-react';
 import { api, errorMessage, inputCls, inputInlineCls } from './broadcastUtils';
 import { refreshApi } from './queryClient';
-import { BUTTON, Card, Modal, PageHeader, SkeletonRows } from './ui';
+import { BUTTON, Card, LoadError, Modal, PageHeader, SkeletonRows } from './ui';
 import { COLOR_CLS, TYPE_HELP, useLeadStatuses, type LeadStatus, type StatusType } from './leadStatuses';
 import type { ShowToast } from './types';
 
@@ -44,7 +44,7 @@ export default function LeadStatusesScreen({ showToast }: { showToast: ShowToast
       <div className="max-w-4xl mx-auto px-4 py-5 space-y-4">
         <PageHeader icon={Tags} title="Lead statuses" help="Your own pipeline steps, in your words. Only your business sees them." />
 
-        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{errorMessage(error)}</div>}
+        {error && <LoadError error={errorMessage(error)} onRetry={() => refreshApi('/api/lead-statuses')} />}
         {loading && <SkeletonRows rows={4} label="Loading statuses" />}
 
         {!loading && (

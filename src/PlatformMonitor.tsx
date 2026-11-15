@@ -5,6 +5,7 @@ import {
   ScrollText, History, Send, X, RefreshCw, Webhook, Search, Building2, type LucideIcon,
 } from 'lucide-react';
 import { api, errorMessage, inputInlineCls, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonCards, SkeletonRows } from './ui';
 import { useVisiblePolling, REFRESH } from './usePolling';
 import type {
   Alert, AuditEntry, BusinessDetail, DeliveryRow, HealthWithAlerts, LimitKey, Plan, SystemEvent, WorkerRunRow, WorkerStatus,
@@ -49,7 +50,7 @@ const Card = ({ title, icon: Icon, children, right }: { title: string; icon?: Lu
     {children}
   </div>
 );
-const Err = ({ msg }: { msg: string }) => (msg ? <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{msg}</div> : null);
+const Err = ({ msg, onRetry }: { msg: string; onRetry?: () => unknown }) => (msg ? <LoadError error={msg} onRetry={onRetry} /> : null);
 const SOURCES = ['webhook', 'worker', 'meta', 'ai', 'ads', 'auth', 'billing', 'system'];
 
 function BusinessSelect({ businesses, value, onChange, allowNone = true }: { businesses: BusinessNames; value: string; onChange: (v: string) => void; allowNone?: boolean }) {
@@ -108,8 +109,8 @@ interface HealthPanelProps { data: HealthWithAlerts | null; error: string; reloa
 
 export function HealthPanel({ data, error, reload, onOpenBusiness }: HealthPanelProps) {
   useVisiblePolling(reload, REFRESH.platformHealth);
-  if (error) return <Err msg={error} />;
-  if (!data) return <div className="text-sm text-slate-500">Loading…</div>;
+  if (error) return <Err msg={error} onRetry={reload} />;
+  if (!data) return <><SkeletonCards count={4} label="Loading health" /><SkeletonRows rows={3} label="Loading health" /></>;
   const { health: h, alerts } = data;
   const w = h.worker;
   return (
@@ -228,7 +229,8 @@ export function EventsPanel({ businesses, initialBusinessId = '' }: { businesses
         <label className="flex items-center gap-1">To <input type="date" value={f.to} onChange={e => setF(x => ({ ...x, to: e.target.value }))} className={inputInlineCls} /></label>
         <button onClick={() => load()} className={btnSecondary}><RefreshCw className="w-3.5 h-3.5" /> Refresh</button>
       </div>
-      <Err msg={error} />
+      <Err msg={error} onRetry={() => load()} />
+      {!list && !error && <SkeletonRows rows={5} label="Loading events" />}
       {list && (
         <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
           {list.length === 0 && <div className="p-4 text-xs text-slate-500">No events match.</div>}
@@ -281,7 +283,8 @@ export function WorkerPanel() {
         </div>
       </div>
       <p className="text-xs text-slate-500">The background worker runs every 5 minutes: follow-ups, broadcasts, inactive-customer checks, and hourly billing, query auto-close, clean-up and ads sync. Runs are kept 14 days.</p>
-      <Err msg={error} />
+      <Err msg={error} onRetry={load} />
+      {!data && !error && <SkeletonRows rows={4} label="Loading worker runs" />}
       {s && (
         <div className={`p-3 rounded-xl border text-xs ${s.stale ? 'bg-red-50 border-red-200 text-red-800' : 'bg-white border-slate-200 text-slate-700'}`}>
           Last run {s.last ? ago(s.last.started_at) : 'never'} · {s.runsLastHour} runs in the last hour · {s.runsLastDay} in 24 h ({s.failedLastDay} with errors) · average {num(s.avgDurationMs)} ms
@@ -342,7 +345,8 @@ export function DeliveryPanel({ onOpenBusiness }: { onOpenBusiness: OpenBusiness
         </div>
       </div>
       <p className="text-xs text-slate-500">Counts only. A high failure rate usually means a token problem, low number quality, or sending to numbers that are not on WhatsApp.</p>
-      <Err msg={error} />
+      <Err msg={error} onRetry={load} />
+      {!data && !error && <SkeletonRows rows={4} label="Loading delivery" />}
       {data && (
         <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
           <table className="w-full text-xs">
@@ -411,7 +415,8 @@ export function AuditPanel({ businesses, initialBusinessId = '' }: { businesses:
         <label className="flex items-center gap-1">From <input type="date" value={f.from} onChange={e => setF(x => ({ ...x, from: e.target.value }))} className={inputInlineCls} /></label>
         <label className="flex items-center gap-1">To <input type="date" value={f.to} onChange={e => setF(x => ({ ...x, to: e.target.value }))} className={inputInlineCls} /></label>
       </div>
-      <Err msg={error} />
+      <Err msg={error} onRetry={() => load()} />
+      {!list && !error && <SkeletonRows rows={5} label="Loading the audit log" />}
       {list && (
         <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
           {list.length === 0 && <div className="p-4 text-xs text-slate-500">No entries match.</div>}
@@ -437,7 +442,8 @@ export function AuditPanel({ businesses, initialBusinessId = '' }: { businesses:
 const LIMIT_LABELS: Array<[LimitKey, string]> = [
   ['max_staff', 'Team members'], ['max_contacts', 'Contacts'], ['max_broadcasts_month', 'Broadcasts / month'],
   ['max_automations', 'Active follow-ups'], ['max_ai_replies_month', 'AI replies / month'], ['max_keyword_rules', 'Keyword rules'], ['analytics_days', 'Analytics days'],
-  ['max_whatsapp_numbers', 'WhatsApp numbers'],
+  ['max_whatsapp_numbers', 'WhatsApp numbers'], ['max_custom_fields', 'Customer fields'], ['max_import_rows_per_file', 'Import rows / file'],
+  ['max_import_file_mb', 'Import file MB'], ['max_import_rows_month', 'Imported / month'],
 ];
 
 /** canEdit: plan, paid-until, suspend, limit overrides (Platform Owner). canResendInvite: owner + Application Managers. */
@@ -547,8 +553,8 @@ export function BusinessDrawer({ id, plans, onClose, onChanged, showToast, canEd
           <div className="text-base font-bold text-slate-800">{b?.name || 'Business'}</div>
           <button onClick={onClose} className="p-1 text-slate-500 hover:text-slate-900 cursor-pointer"><X className="w-5 h-5" /></button>
         </div>
-        <Err msg={error} />
-        {!d && !error && <div className="text-sm text-slate-500">Loading…</div>}
+        <Err msg={error} onRetry={load} />
+        {!d && !error && <SkeletonRows rows={4} label="Loading the business" />}
         {d && b && (
           <>
             <div className="text-xs text-slate-500">{b.slug} · {INDUSTRY_LABEL[b.industry || 'general'] || b.industry} · created {new Date(b.created_at).toLocaleDateString()} by {b.created_by || '–'}</div>

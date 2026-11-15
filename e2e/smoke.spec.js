@@ -76,6 +76,7 @@ test.describe('signed in', () => {
       if (!(await tab.count())) continue; // e.g. Ads and Settings are hidden for agents
       await tab.first().click();
       await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 15000 });
+      await expect(page.getByTestId('skeleton'), `"${name}" kept loading`).toHaveCount(0, { timeout: 15000 });
       await expect(page.getByText(CRASH_TEXT), `"${name}" crashed`).toHaveCount(0);
       opened.push(name);
     }

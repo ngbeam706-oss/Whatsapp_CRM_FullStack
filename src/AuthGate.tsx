@@ -4,6 +4,7 @@ import { BrandLogo, useBrandName } from './BrandMark';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
 import { markJustSignedIn } from './signInFlag';
+import { AppFrameSkeleton, LoadError, Spinner } from './ui';
 import type { Role } from './types';
 
 /** This login's staff_members row (RLS lets a login read only its own). */
@@ -42,6 +43,9 @@ export default function AuthGate({ children }: { children: (signedIn: SignedIn) 
   }, []);
 
   const userId = session?.user?.id;
+  // The staff lookup could not reach the server (not "not staff"): shown with "Try again", which bumps this.
+  const [checkFailed, setCheckFailed] = useState('');
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
@@ -52,10 +56,17 @@ export default function AuthGate({ children }: { children: (signedIn: SignedIn) 
       // RLS: a doctor's login reads only its own row (and only these columns). Before SQL 20261139: an error = not a doctor.
       supabase.from('clinic_doctors').select('id, active').eq('user_id', userId).maybeSingle(),
     ]).then(([s, p, d]) => {
-      if (!cancelled) setStaffCheck({ userId, staff: s.error ? null : (s.data as StaffRow | null), platformAdmin: !p.error && !!p.data, doctor: !d.error && !!(d.data as { active?: boolean } | null)?.active });
-    });
+      if (cancelled) return;
+      // A failed staff lookup (network, server) is not "no access": say so and offer a retry.
+      if (s.error && /fetch|network|timeout|failed/i.test(s.error.message || '')) {
+        setCheckFailed('Could not check your sign-in. Check your connection and try again.');
+        return;
+      }
+      setCheckFailed('');
+      setStaffCheck({ userId, staff: s.error ? null : (s.data as StaffRow | null), platformAdmin: !p.error && !!p.data, doctor: !d.error && !!(d.data as { active?: boolean } | null)?.active });
+    }).catch(() => { if (!cancelled) setCheckFailed('Could not check your sign-in. Check your connection and try again.'); });
     return () => { cancelled = true; };
-  }, [userId]);
+  }, [userId, attempt]);
 
   const signOut = () => { supabase.auth.signOut(); };
 
@@ -65,8 +76,25 @@ export default function AuthGate({ children }: { children: (signedIn: SignedIn) 
   const doctor = staffCheck.userId === userId && !!staffCheck.doctor;
   const notStaff = !!userId && !checking && !staff && !platformAdmin && !doctor;
 
+  if (checking && checkFailed && sessionLoaded) {
+    return (
+      <CenteredCard>
+        <div data-testid="signin-check-failed" className="space-y-3">
+          <LoadError error={checkFailed} onRetry={() => { setCheckFailed(''); setAttempt(n => n + 1); }} />
+          <button onClick={signOut} className="w-full text-xs text-slate-500 hover:text-slate-700 cursor-pointer">Sign out</button>
+        </div>
+      </CenteredCard>
+    );
+  }
+
   if (checking) {
-    return <CenteredCard><p className="text-sm text-slate-500">Checking your sign-in…</p></CenteredCard>;
+    // The app's own frame with a note, so the dashboard grows out of it instead of flashing a white card.
+    return (
+      <div className="relative" data-testid="signin-checking">
+        <AppFrameSkeleton label="Checking your sign-in…" />
+        <p className="absolute inset-x-0 top-20 text-center text-sm text-slate-500 flex items-center justify-center gap-2"><Spinner className="w-4 h-4" /> Checking your sign-in…</p>
+      </div>
+    );
   }
 
   if (!session) return <LoginScreen />;

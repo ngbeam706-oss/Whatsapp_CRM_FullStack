@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useEscape } from './ui';
+import { useEscape, LoadError, SkeletonRows, SkeletonConversation } from './ui';
 import type {
   BusinessNumber, ChatMessage, ContactNote, ContactPatch, Conversation as ConversationData, InboxContact, Me, ShowToast,
   StaffMember, TeamResponse, Template, VariableSpec,
@@ -23,6 +23,7 @@ import { TemplatePreview, VariableInput } from './BroadcastUi';
 import { REFRESH } from './usePolling';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import ContactQueries from './ContactQueries';
+import CustomerDetailsCard from './CustomerDetailsCard';
 import {
   useSavedReplies, slashQuery, fillReply, SlashPicker, SavedReplyChips, SavedRepliesManager, AttachButton, MessageMedia, hasMedia, isMediaLabel,
   CloseChatButton, ClosedBanner, AlertBell, CLOSE_REASONS,
@@ -294,8 +295,9 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
         </div>
 
         <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
-          {listError && <div className="m-3 p-2.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg">{listError}</div>}
-          {!listError && list.length === 0 && (
+          {listError && <LoadError className="m-3" error={listError} onRetry={() => listQuery.refetch()} />}
+          {!listError && !listQuery.data && <div className="p-3"><SkeletonRows rows={6} label="Loading chats" /></div>}
+          {!listError && listQuery.data && list.length === 0 && (
             <div className="p-8 text-center text-xs text-slate-400">
               <MessageSquare className="w-6 h-6 mx-auto mb-2 text-slate-300" />
               {filter === 'mine' ? 'No chats assigned to you.' : filter === 'unread' ? 'All caught up! 🎉' : filter === 'closed' ? 'No chats marked done.' : 'No conversations here.'}
@@ -379,8 +381,10 @@ export default function InboxScreen({ me, onStartCall, showToast, openPhone, onO
             <h2 className="text-base font-semibold text-slate-800">Team inbox</h2>
             <p className="text-xs text-slate-500 max-w-sm mt-1">Pick a conversation. Replies come from your business number, and the bot steps aside while your team is chatting.</p>
           </div>
+        ) : !convo && convoQuery.error ? (
+          <div className="flex-1 flex items-center justify-center p-6"><LoadError error={errorOf(convoQuery)} onRetry={() => convoQuery.refetch()} /></div>
         ) : !contact || !convo ? (
-          <div className="flex-1 flex items-center justify-center text-xs text-slate-500">Loading…</div>
+          <SkeletonConversation label="Loading the conversation" />
         ) : (
           <Conversation
             key={contact.phone}
@@ -881,6 +885,8 @@ function DetailsPanel({ contact: c, notes, me, staff, onUpdate, onNotesChanged, 
             ))}
           </div>
         </section>
+
+        <CustomerDetailsCard key={`details-${c.phone}`} phone={c.phone} showToast={showToast} />
 
         <ContactQueries key={c.phone} phone={c.phone} me={me} showToast={showToast} />
 

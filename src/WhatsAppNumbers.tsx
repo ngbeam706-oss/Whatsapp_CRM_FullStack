@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { Phone, Plus, Pencil, Trash2, Check, X, Star } from 'lucide-react';
 import { api, errorMessage, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonRows } from './ui';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import type { ShowToast } from './types';
 import MetaSetupGuide from './MetaSetupGuide';
@@ -39,8 +40,10 @@ export default function WhatsAppNumbers({ isOwner, showToast }: { isOwner: boole
   const [removing, setRemoving] = useState<string | null>(null);
   const [welcomeEdit, setWelcomeEdit] = useState<{ id: string; text: string } | null>(null);
 
+  const [savingWelcome, setSavingWelcome] = useState(false);
   const saveWelcome = async () => {
     if (!welcomeEdit) return;
+    setSavingWelcome(true);
     try {
       await api(`/api/whatsapp/numbers/${welcomeEdit.id}`, { method: 'PATCH', body: { welcomeMessage: welcomeEdit.text.trim() || null } });
       setWelcomeEdit(null);
@@ -48,6 +51,8 @@ export default function WhatsAppNumbers({ isOwner, showToast }: { isOwner: boole
       await reload();
     } catch (err) {
       showToast(errorMessage(err));
+    } finally {
+      setSavingWelcome(false);
     }
   };
 
@@ -118,7 +123,7 @@ export default function WhatsAppNumbers({ isOwner, showToast }: { isOwner: boole
     )
   );
 
-  if (!data && !error) return null;
+  if (!data && !error) return <SkeletonRows rows={2} label="Loading your numbers" />;
   return (
     <section className="bg-white border border-slate-200 rounded-xl p-4 space-y-3" data-testid="wa-numbers">
       <div className="flex flex-wrap items-center gap-2">
@@ -138,7 +143,7 @@ export default function WhatsAppNumbers({ isOwner, showToast }: { isOwner: boole
       <p className="text-xs text-slate-500">
         Customers can write to any of these numbers; each customer is one chat in the Inbox, and replies go from the number they last wrote to.
       </p>
-      {error && <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
+      {error && <LoadError error={error} onRetry={() => q.refetch()} />}
       {data && !data.tableReady && <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">Extra numbers need the database update for several numbers (SQL 20261122). Ask the platform team.</div>}
 
       {data && (
@@ -177,7 +182,7 @@ export default function WhatsAppNumbers({ isOwner, showToast }: { isOwner: boole
                     placeholder={`e.g. Welcome to ${n.label || 'our pharmacy'}! 👋 How can we help you today? (Empty = the Bot Flow's welcome.)`}
                     className={`${inputCls} text-xs`} />
                   <div className="flex items-center gap-2">
-                    <button onClick={saveWelcome} className={btnPrimary}><Check className="w-3.5 h-3.5" /> Save welcome</button>
+                    <button onClick={saveWelcome} disabled={savingWelcome} className={btnPrimary}><Check className="w-3.5 h-3.5" /> {savingWelcome ? 'Saving…' : 'Save welcome'}</button>
                     <button onClick={() => setWelcomeEdit(null)} className={btnSecondary}>Cancel</button>
                     <span className="text-xs text-slate-500">Sent above the bot&apos;s menu buttons to customers of this number. No health or cure claims.</span>
                   </div>

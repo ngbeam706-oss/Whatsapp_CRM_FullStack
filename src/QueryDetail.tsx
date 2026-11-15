@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Send, ArrowUpCircle, MessageSquare, Lock, Star, UserPlus, AlertTriangle, RotateCcw, CheckCircle2 } from 'lucide-react';
 import { api, inputCls, inputInlineCls, btnPrimary, btnSecondary } from './broadcastUtils';
 import { useApi, refreshApi } from './queryClient';
-import { BUTTON, useEscape } from './ui';
+import { BUTTON, SkeletonRows, useEscape } from './ui';
 import {
   QUERY_STAGE_INFO, QUERY_MOVES, PRIORITIES, PRIORITY_INFO, SOURCE_LABEL, ADDRESSED_LABEL, dueText, eventText, ago,
   type Priority, type QueryDetailResponse, type QueryStage,
@@ -101,7 +101,7 @@ export default function QueryDetail({ id, kind = 'query', me, onClose, onChanged
   };
 
   if (!d || !q) {
-    return <Shell onClose={onClose}><div className="text-sm text-slate-500 p-6">Loading…</div></Shell>;
+    return <Shell onClose={onClose}><div className="p-4"><SkeletonRows rows={4} label="Loading the query" /></div></Shell>;
   }
 
   const stage: { label?: string; cls?: string } = QUERY_STAGE_INFO[q.stage as QueryStage] || {};

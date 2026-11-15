@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { UserCircle2, Save, Trophy, Mail, Briefcase, Phone, Languages, Building2 } from 'lucide-react';
 import { api, errorMessage, btnPrimary } from './broadcastUtils';
+import { LoadError, SkeletonCards, SkeletonForm } from './ui';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import { avatarBg, roleLabel } from './crmUtils';
 import { DailyBars, PeriodPicker, StatTiles } from './staffStatsUi';
@@ -31,8 +32,8 @@ export default function ProfileScreen({ showToast }: { showToast: ShowToast }) {
     <div className="flex-1 overflow-y-auto bg-slate-100">
       <div className="max-w-5xl mx-auto px-4 py-5 space-y-4">
         <h1 className="text-lg font-bold text-slate-800 flex items-center gap-2"><UserCircle2 className="w-5 h-5 text-wa-teal" /> My profile</h1>
-        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-        {!data && !error && <div className="text-sm text-slate-500">Loading…</div>}
+        {error && <LoadError error={error} onRetry={() => q.refetch()} />}
+        {!data && !error && <><SkeletonCards count={4} label="Loading your profile" /><SkeletonForm fields={4} label="Loading your profile" /></>}
         {data && (
           <>
             <div className="grid md:grid-cols-[320px_1fr] gap-4 items-start">

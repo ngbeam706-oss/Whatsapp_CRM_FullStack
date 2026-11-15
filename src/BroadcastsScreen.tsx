@@ -8,6 +8,7 @@ import { canManage } from './crmUtils';
 import { REFRESH } from './usePolling';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import { api, errorMessage, placeholders, templateNeeds, fmtDate, pct, inputCls, inputInlineCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonRows } from './ui';
 import { Badge, Field, TemplatePreview, VariableInput } from './BroadcastUi';
 import AutomationsTab from './AutomationsTab';
 import BroadcastGuide from './BroadcastGuide';
@@ -185,7 +186,8 @@ function TemplatesTab({ templates, error, loading, reload, isOwner, showToast, o
         </div>
       </div>
 
-      {error && <div className="m-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
+      {error && <LoadError className="m-4" error={error} onRetry={reload} />}
+      {!error && loading && templates.length === 0 && <div className="p-4"><SkeletonRows rows={3} label="Loading templates" /></div>}
 
       {!error && templates.length === 0 && !loading && (
         <div className="p-8 text-center text-sm text-slate-500">
@@ -417,7 +419,8 @@ function CampaignsTab({ templates, account, isOwner, showToast, goToTemplates, o
         </div>
       </div>
 
-      {error && <div className="m-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
+      {error && <LoadError className="m-4" error={error} onRetry={() => listQuery.refetch()} />}
+      {!error && !listQuery.data && <div className="p-4"><SkeletonRows rows={3} label="Loading broadcasts" /></div>}
       {!error && campaigns.length === 0 && !loading && (
         <div className="p-8 text-center text-sm text-slate-500">No broadcast campaigns yet.{isOwner ? ' Click "New broadcast" to send your first message to your contacts.' : ''}</div>
       )}
@@ -497,8 +500,8 @@ function CampaignDetail({ id, isOwner, showToast, onBack }: { id: string; isOwne
     }
   };
 
-  if (error) return <div className="bg-white border rounded-xl p-4 text-sm text-red-700">{error} <button onClick={onBack} className="underline ml-2">Back</button></div>;
-  if (!data) return <div className="bg-white border rounded-xl p-6 text-sm text-slate-500">Loading…</div>;
+  if (error) return <div className="space-y-2"><LoadError error={error} onRetry={() => detail.refetch()} /><button onClick={onBack} className={btnSecondary}>Back</button></div>;
+  if (!data) return <SkeletonRows rows={5} label="Loading" />;
 
   const c = data.campaign;
   const s = c.stats || {};

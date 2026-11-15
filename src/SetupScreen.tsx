@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ListChecks, CheckCircle2, Circle, ArrowRight, Building2, Save, Clock, Gauge, AlertTriangle } from 'lucide-react';
 import { api, errorMessage, inputCls, inputInlineCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonRows } from './ui';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import { roleLabel } from './crmUtils';
 import type { Role, ShowToast } from './types';
@@ -120,8 +121,8 @@ export default function SetupScreen({ userRole, onGo, onProfileSaved, showToast 
           <h1 className="text-lg font-bold text-slate-800 flex items-center gap-2"><ListChecks className="w-5 h-5 text-wa-teal" /> Setup</h1>
           <p className="text-xs text-slate-500">Get your business ready on WhatsApp, step by step.</p>
         </div>
-        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-        {!checks && !error && <div className="text-sm text-slate-500">Loading…</div>}
+        {error && <LoadError error={error} onRetry={() => { checklistQuery.refetch(); profileQuery.refetch(); }} />}
+        {!checks && !error && <SkeletonRows rows={5} label="Loading the setup checklist" />}
 
         {checks && (
           <section className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">

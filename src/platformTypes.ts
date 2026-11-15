@@ -13,6 +13,11 @@ export interface PlanLimits {
   analytics_days: number | null;
   /** Main + extra WhatsApp numbers (null = unlimited). Missing before SQL 20261123. */
   max_whatsapp_numbers?: number | null;
+  /** Customer import limits (SQL 20261142; missing before it). */
+  max_custom_fields?: number | null;
+  max_import_rows_per_file?: number | null;
+  max_import_file_mb?: number | null;
+  max_import_rows_month?: number | null;
   ai_enabled?: boolean;
   ads_enabled?: boolean;
 }

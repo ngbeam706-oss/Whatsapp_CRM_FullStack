@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useConfirm } from './confirm';
 import { Plus, RotateCw, ArrowLeft, Trash2, Pencil, X, Clock, Check, CheckCheck, Eye, Reply, Ban, Copy, Zap, AlertTriangle } from 'lucide-react';
 import { api, errorMessage, templateNeeds, fmtDate, inputCls, inputInlineCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonRows } from './ui';
 import { Badge, Field, TemplatePreview, VariableInput } from './BroadcastUi';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import type { ShowToast, Template, VariableSpec } from './types';
@@ -170,7 +171,8 @@ export default function AutomationsTab({ templates, isOwner, showToast, goToTemp
           </div>
         </div>
 
-        {error && <div className="m-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
+        {error && <LoadError className="m-4" error={error} onRetry={() => listQuery.refetch()} />}
+        {!error && !listQuery.data && <div className="p-4"><SkeletonRows rows={3} label="Loading automations" /></div>}
         {!error && !loading && list.length === 0 && (
           <div className="p-8 text-center text-sm text-slate-500 space-y-2">
             <div>No automations yet. Set one up once and it keeps working by itself.</div>
@@ -478,8 +480,8 @@ function AutomationDetail({ id, isOwner, showToast, onBack, onEdit, onToggle }: 
     }
   };
 
-  if (error) return <div className="bg-white border rounded-xl p-4 text-sm text-red-700">{error} <button onClick={onBack} className="underline ml-2">Back</button></div>;
-  if (!data) return <div className="bg-white border rounded-xl p-6 text-sm text-slate-500">Loading…</div>;
+  if (error) return <div className="space-y-2"><LoadError error={error} onRetry={() => detail.refetch()} /><button onClick={onBack} className={btnSecondary}>Back</button></div>;
+  if (!data) return <SkeletonRows rows={5} label="Loading" />;
 
   const a = data.automation;
   const rows = data.runs.filter(r => filter === 'all' ? true : filter === 'waiting' ? ['scheduled', 'sending'].includes(r.status)

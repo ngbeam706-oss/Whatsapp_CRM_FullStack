@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type Rea
 import { useConfirm } from './confirm';
 import { Palette, Save, Upload, Trash2, ExternalLink, AlertTriangle, CheckCircle2, Building2, Mail, Scale, ImageIcon, Globe } from 'lucide-react';
 import { api, ApiError, errorMessage, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonForm } from './ui';
 import { reloadBranding, REQUIRED_FOR_LEGAL, type BrandField } from './branding';
 import { SITE } from './site/siteConfig';
 import type { ShowToast } from './types';
@@ -65,11 +66,12 @@ export default function PlatformBranding({ showToast }: { showToast: ShowToast }
   const [busy, setBusy] = useState<'' | 'save' | 'logo'>('');
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     api<AdminBranding>('/api/platform/branding')
-      .then(d => { setSaved(d); setForm(d.branding || {}); })
+      .then(d => { setSaved(d); setForm(d.branding || {}); setLoadError(''); })
       .catch(e => setLoadError(errorMessage(e)));
-  }, []);
+  }, [attempt]);
 
   const changed = !!saved && (Object.keys(LABELS) as BrandField[]).some(k => (form[k] || '') !== (saved.branding[k] || ''));
   const missing = REQUIRED_FOR_LEGAL.filter(k => !(form[k] || '').trim());
@@ -130,8 +132,8 @@ export default function PlatformBranding({ showToast }: { showToast: ShowToast }
     }
   };
 
-  if (loadError) return <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{loadError}</div>;
-  if (!saved) return <div className="text-sm text-slate-500">Loading…</div>;
+  if (loadError) return <LoadError error={loadError} onRetry={() => setAttempt(n => n + 1)} />;
+  if (!saved) return <SkeletonForm fields={6} label="Loading branding" />;
 
   return (
     <section className="space-y-4" data-testid="platform-branding">

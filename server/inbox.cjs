@@ -26,7 +26,9 @@ const campaigns = require('./campaigns.cjs');
 const STAGES = ['new', 'interested', 'ordered', 'completed', 'repeat', 'lost'];
 const WINDOW_MS = 24 * 3600 * 1000;            // WhatsApp customer-service window
 const AUTO_PAUSE_HOURS = 12;                   // bot stays quiet after a staff reply / "talk to staff"
-const LEAD_FIELDS = 'phone,name,last_message,last_contacted_at,last_inbound_at,assigned_to,stage,stage_changed_at,bot_paused,bot_paused_until,unread_count,source,referral,tags,opted_out,created_at,first_ad_id,first_ad_headline,first_ad_at,last_ad_id,last_ad_headline,last_ad_at,last_phone_number_id';
+/** Not an imported person who never chatted (a PostgREST filter of its own, so it never mixes with or-groups; SQL 20261142). */
+const NOT_SILENT_IMPORT = 'not.and=(imported_at.not.is.null,last_contacted_at.is.null)';
+const LEAD_FIELDS ='phone,name,last_message,last_contacted_at,last_inbound_at,assigned_to,stage,stage_changed_at,bot_paused,bot_paused_until,unread_count,source,referral,tags,opted_out,created_at,first_ad_id,first_ad_headline,first_ad_at,last_ad_id,last_ad_headline,last_ad_at,last_phone_number_id';
 /** @param {unknown} p @returns {boolean} */
 const isPhone = (p) => /^\d{7,15}$/.test(String(p || ''));
 
@@ -187,6 +189,8 @@ async function listConversations(biz, { filter = 'all', stage = '', q = '', staf
     if (main && String(main.phoneNumberId) === num) ors.push(`or(last_phone_number_id.eq.${num},last_phone_number_id.is.null)`);
     else parts.push(`last_phone_number_id=eq.${num}`);
   }
+  // Imported people who never chatted stay out of the Inbox (Leads page: "Imported, not chatted yet"; SQL 20261142).
+  if (await require('./customFields.cjs').importColumnsReady(biz)) parts.push(NOT_SILENT_IMPORT);
   if (ors.length === 1) parts.push(ors[0].replace(/^or\(/, 'or=('));
   else if (ors.length > 1) parts.push(`and=(${ors.join(',')})`);
   // Closed chats only under "Closed"; every other view shows open chats.
@@ -243,7 +247,9 @@ async function getConversation(biz, phone) {
 /** @param {string} biz */
 async function pipeline(biz) {
   const id = requireBusinessId(biz);
-  const res = await leadQuery(fields => `whatsapp_leads?select=${fields}&business_id=eq.${id}&order=last_contacted_at.desc.nullslast&limit=1000`);
+  // Imported people who never chatted are not on the board (they would bury the real conversations).
+  const notImported = (await require('./customFields.cjs').importColumnsReady(id)) ? `&${NOT_SILENT_IMPORT}` : '';
+  const res = await leadQuery(fields => `whatsapp_leads?select=${fields}&business_id=eq.${id}${notImported}&order=last_contacted_at.desc.nullslast&limit=1000`);
   if (!res.ok) return { error: 'Could not load the pipeline. Has the Phase 4 SQL been run?' };
   // One column per visible status of this business (a hidden status still holding chats keeps its column).
   const ls = require('./leadStatuses.cjs');

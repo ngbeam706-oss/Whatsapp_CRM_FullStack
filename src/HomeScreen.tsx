@@ -6,7 +6,7 @@ import { UsageCard, type Usage } from './SetupScreen';
 import { useApi, errorOf, refreshApi } from './queryClient';
 import { api, errorMessage } from './broadcastUtils';
 import { REFRESH } from './usePolling';
-import { PageHeader, SkeletonRows, BUTTON } from './ui';
+import { PageHeader, SkeletonRows, SkeletonCards, LoadError, BUTTON } from './ui';
 import { avatarBg, displayName, initials, shortTime } from './crmUtils';
 import { QUERY_STAGE_INFO, PRIORITY_INFO, dueText } from './queryUtils';
 import type { Contact, Me, ShowToast } from './types';
@@ -65,8 +65,8 @@ export default function HomeScreen({ me, onOpenChat, onOpenQuery, onOpenPersonCh
         {isOwner && <BusinessCard onGo={onGo} />}
 
         {isManager && <h2 className="text-lg font-bold text-slate-800 pt-2">My work</h2>}
-        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
-        {!d && !error && <SkeletonRows rows={4} label="Loading your work" />}
+        {error && <LoadError error={error} onRetry={() => q.refetch()} />}
+        {!d && !error && <><SkeletonCards count={3} label="Loading your work" /><SkeletonRows rows={4} label="Loading your work" /></>}
 
         {d && (
           <>
@@ -122,7 +122,7 @@ function TeamTodayPanel({ onOpenChat, onOpenQuery, onOpenPersonChats, showToast 
   const t = useApi<TeamToday>('/api/home/team', { refetchInterval: REFRESH.home });
   const d = t.data;
   const [busy, setBusy] = useState('');
-  if (t.error) return <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{errorOf(t)}</div>;
+  if (t.error) return <LoadError error={errorOf(t)} onRetry={() => t.refetch()} />;
   if (!d) return <SkeletonRows rows={2} label="Loading the team" />;
 
   // Hand a waiting chat to someone (same rules as the Inbox: managers may transfer any chat).

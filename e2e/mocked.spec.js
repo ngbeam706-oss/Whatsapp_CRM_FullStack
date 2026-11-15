@@ -432,7 +432,7 @@ test('each screen has its own address in the role\'s area: refresh stays, Back w
   await page.goto('/app');
   await expect(page).toHaveURL(/\/admin\/home$/, { timeout: 20000 });
   const menu = page.getByRole('navigation', { name: 'Main menu' });
-  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
+  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Customer fields', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
   await menu.getByRole('link', { name: 'Ads', exact: true }).click();
   await expect(page).toHaveURL(/\/admin\/ads\/results$/);
   await expect(menu.getByRole('link', { name: 'Ads', exact: true })).toHaveAttribute('aria-current', 'page');
@@ -448,6 +448,7 @@ test('each screen has its own address in the role\'s area: refresh stays, Back w
   await expect(page).toHaveURL(/\/admin\/settings\/team$/);
   await expect(menu.getByRole('link', { name: 'Team', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByText('Loading…')).toHaveCount(0, { timeout: 15000 });
+  await expect(page.getByTestId('skeleton')).toHaveCount(0, { timeout: 15000 });
   await page.screenshot({ path: 'test-results/settings-area.png' });
   await page.reload();
   await expect(settings.getByRole('link', { name: 'Team', exact: true })).toHaveAttribute('aria-current', 'page', { timeout: 20000 });
@@ -809,11 +810,11 @@ test('managers and the Business Admin still get every page', async ({ page }) =>
   await page.goto('/app');
   const menu = page.getByRole('navigation', { name: 'Main menu' });
   await expect(menu.getByRole('link', { name: 'Inbox' })).toBeVisible({ timeout: 20000 });
-  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
+  await expect(menu.getByRole('link')).toHaveText(['Home', /^Inbox/, 'Pipeline', 'Leads', 'Queries', 'Broadcasts', 'Ads', 'Analytics', 'Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Customer fields', 'Bot Flow', 'Auto-replies', 'AI assistant', 'My profile']);
   await openScreen(page, 'Setup');
   // Phones: the settings pages also get their own row at the top of the Settings area.
   await page.setViewportSize({ width: 390, height: 800 });
-  await expect(page.getByRole('navigation', { name: 'Settings menu' }).getByRole('link')).toHaveText(['Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Bot Flow', 'Auto-replies', 'AI assistant']);
+  await expect(page.getByRole('navigation', { name: 'Settings menu' }).getByRole('link')).toHaveText(['Setup', 'WhatsApp', 'Team', 'Lead statuses', 'Lead assignment', 'Customer fields', 'Bot Flow', 'Auto-replies', 'AI assistant']);
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(page.getByText('Business Admin', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/owner-header.png' });
@@ -3161,4 +3162,415 @@ test('sign-in after someone else signed out: the page left on /agent/inbox takes
   // Typing another role's address afterwards is still "Not allowed" (only the moment of signing in moves you).
   await page.goto('/agent/inbox');
   await expect(page.getByTestId('area-not-allowed')).toBeVisible({ timeout: 20000 });
+});
+
+// ---------------------------------------------------------------------------
+// Loading states (docs/progress/ui-enhancement.md "Loading states"): while an answer is slow, each screen
+// shows a skeleton shaped like its content (never a blank area or a wrong "nothing here"); a failed load
+// shows the reason with "Try again".
+// ---------------------------------------------------------------------------
+
+/** Hold every request matching `pattern` until the returned release() is called, then answer as usual. */
+async function holdRoute(page, pattern) {
+  let release;
+  const gate = new Promise(r => { release = r; });
+  await page.route(pattern, async route => { await gate; await route.fallback(); });
+  return () => release();
+}
+
+/** A signed-in platform admin or clinic doctor (no staff row), with the given /api answers. */
+async function fakeOtherLogin(page, { user, platformAdmin = false, doctor = null, answer }) {
+  await enforceCsp(page);
+  await page.addInitScript(([key, u]) => {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    localStorage.setItem(key, JSON.stringify({ access_token: 'e2e-fake-token', token_type: 'bearer', expires_in: 3600, expires_at: exp, refresh_token: 'e2e-refresh', user: { id: u.id, email: u.email, aud: 'authenticated', role: 'authenticated', app_metadata: {}, user_metadata: {} } }));
+  }, [STORAGE_KEY, user]);
+  await page.route('**/rest/v1/staff_members*', r => r.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
+  await page.route('**/rest/v1/platform_admins*', r => (platformAdmin ? r.fulfill({ json: { user_id: user.id } }) : r.fulfill({ status: 200, contentType: 'application/json', body: 'null' })));
+  await page.route('**/rest/v1/clinic_doctors*', r => (doctor ? r.fulfill({ json: doctor }) : r.fulfill({ status: 200, contentType: 'application/json', body: 'null' })));
+  await page.route('**/auth/v1/**', r => r.fulfill({ json: {} }));
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const body = answer(path, route.request());
+    return route.fulfill(body ? { json: body } : { status: 404, json: { error: `no mock for ${path}` } });
+  });
+}
+
+test('loading states (agent): sign-in check, Home, Inbox list, an open chat and the Pipeline show skeletons while slow', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'agent' });
+  // 1. Checking the sign-in: the app's frame with a note, not a blank page.
+  const releaseStaff = await holdRoute(page, '**/rest/v1/staff_members*');
+  const releaseHome = await holdRoute(page, '**/api/home');
+  await page.goto('/agent/home');
+  await expect(page.getByTestId('signin-checking')).toBeVisible({ timeout: 20000 });
+  await expect(page.getByTestId('signin-checking')).toContainText('Checking your sign-in…');
+  releaseStaff();
+  // 2. Home: number tiles and rows while /api/home is slow.
+  await expect(page.getByRole('status', { name: 'Loading your work' }).first()).toBeVisible({ timeout: 20000 });
+  releaseHome();
+  await expect(page.getByTestId('all-caught-up')).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Loading your work' })).toHaveCount(0);
+
+  // 3. Inbox: chat rows while the list loads, never "No conversations here" meanwhile.
+  const releaseList = await holdRoute(page, /\/api\/inbox\?/);
+  await openScreen(page, 'Inbox');
+  await expect(page.getByRole('status', { name: 'Loading chats' }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText('No conversations here.')).toHaveCount(0);
+  releaseList();
+  await expect(page.locator('[data-testid="chat-row"]')).toHaveCount(1);
+
+  // 4. An open chat: message bubbles while the conversation loads.
+  const releaseChat = await holdRoute(page, `**/api/inbox/${LEAD.phone}`);
+  await page.locator('[data-testid="chat-row"]').first().click();
+  await expect(page.getByRole('status', { name: 'Loading the conversation' })).toBeVisible();
+  releaseChat();
+  await expect(page.locator('[data-testid="chat-header"]')).toContainText(LEAD.phone);
+  await expect(page.getByRole('status', { name: 'Loading the conversation' })).toHaveCount(0);
+
+  // 5. Pipeline: columns of grey cards while it loads.
+  const releasePipe = await holdRoute(page, '**/api/pipeline');
+  await openScreen(page, 'Pipeline');
+  await expect(page.getByRole('status', { name: 'Loading the pipeline' })).toBeVisible({ timeout: 15000 });
+  releasePipe();
+  await expect(page.getByText(LEAD.name).first()).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Loading the pipeline' })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('loading states (manager): a screen\'s code shows its skeleton, a failed load shows "Try again" that works, Leads and Settings skeletons', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'manager' });
+  await page.goto('/manager/home');
+  await expect(page.getByRole('navigation', { name: 'Main menu' })).toBeVisible({ timeout: 20000 });
+
+  // The Analytics screen's code is slow: the page skeleton (not a blank area or "Loading…") shows meanwhile.
+  const releaseCode = await holdRoute(page, '**/assets/AnalyticsScreen-*.js');
+  // ...and its first answer fails (a 4xx is not retried by itself): the reason and "Try again".
+  let failed = false;
+  await page.route(/\/api\/analytics\?/, r => {
+    if (!failed) { failed = true; return r.fulfill({ status: 400, json: { error: 'Analytics is taking a break.' } }); }
+    return r.fallback();
+  });
+  await openScreen(page, 'Analytics');
+  await expect(page.getByRole('status', { name: 'Loading the page' }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText('Loading…')).toHaveCount(0);
+  releaseCode();
+  const problem = page.getByTestId('load-error');
+  await expect(problem).toContainText('Analytics is taking a break.', { timeout: 15000 });
+  await problem.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByText('New leads per day').first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId('load-error')).toHaveCount(0);
+
+  // Leads: a table skeleton while the list loads, then the empty state.
+  await page.route('**/api/leads/search', r => r.fulfill({ json: { success: true, total: 0, leads: [], capped: false } }));
+  const releaseLeads = await holdRoute(page, '**/api/leads/search');
+  await openScreen(page, 'Leads');
+  await expect(page.getByRole('status', { name: 'Loading leads' })).toBeVisible({ timeout: 15000 });
+  releaseLeads();
+  await expect(page.getByText('No leads match')).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole('status', { name: 'Loading leads' })).toHaveCount(0);
+
+  // Settings -> WhatsApp: a form skeleton while the connection loads.
+  const releaseWa = await holdRoute(page, '**/api/whatsapp');
+  await openScreen(page, 'WhatsApp');
+  await expect(page.getByRole('status', { name: 'Loading the WhatsApp connection' })).toBeVisible({ timeout: 15000 });
+  releaseWa();
+  await expect(page.getByRole('status', { name: 'Loading the WhatsApp connection' })).toHaveCount(0, { timeout: 15000 });
+  await page.screenshot({ path: 'test-results/loading-states-manager.png' });
+  expect(errors.filter(e => !/status of 400/.test(e))).toEqual([]);
+});
+
+test('loading states (sign-in check fails): "Try again" instead of "No dashboard access"', async ({ page }) => {
+  await fakeBackend(page, { role: 'owner' });
+  let down = true;
+  await page.route('**/rest/v1/staff_members*', r => (down ? r.abort('internetdisconnected') : r.fallback()));
+  await page.goto('/admin/home');
+  const failed = page.getByTestId('signin-check-failed');
+  await expect(failed).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText('No dashboard access')).toHaveCount(0);
+  down = false;
+  await failed.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByRole('navigation', { name: 'Main menu' })).toBeVisible({ timeout: 20000 });
+});
+
+test('loading states (doctor): each page shows its skeleton, then the empty state', async ({ page }) => {
+  const errors = watchErrors(page);
+  const day = istToday();
+  await fakeOtherLogin(page, {
+    user: { id: 'e2e00000-0000-4000-8000-0000000000d1', email: 'rao@e2e.test' },
+    doctor: { id: CLINIC_DOCTOR.id, active: true },
+    answer: (path) => (path === '/api/doctor/me' ? { success: true, doctor: { name: 'Dr Rao', email: 'rao@e2e.test' } }
+      : path === '/api/doctor/appointments' ? { success: true, day, appointments: [] }
+        : path === '/api/doctor/hours' ? { success: true, slotMinutes: 15, hours: [], daysOff: [] }
+          : path === '/api/maintenance' ? { on: false } : null),
+  });
+  const releaseDay = await holdRoute(page, '**/api/doctor/appointments*');
+  await page.goto('/doctor');
+  const app = page.getByTestId('doctor-app');
+  await expect(app.getByTestId('skeleton').first()).toBeVisible({ timeout: 20000 });
+  releaseDay();
+  await expect(app.getByTestId('empty-state').first()).toBeVisible();
+  await expect(app.getByTestId('skeleton')).toHaveCount(0);
+  const releaseHours = await holdRoute(page, '**/api/doctor/hours');
+  await app.getByRole('link', { name: 'My hours' }).first().click();
+  await expect(page.getByRole('status', { name: 'Loading your hours' })).toBeVisible({ timeout: 15000 });
+  releaseHours();
+  await expect(page.getByRole('status', { name: 'Loading your hours' })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('loading states (platform console): the console frame while the role loads, then the tab\'s skeleton', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeOtherLogin(page, { user: ADMIN, platformAdmin: true, answer: (path, req) => (req.method() !== 'GET' ? { success: true } : PLATFORM_ANSWERS[path]) });
+  const releaseMe = await holdRoute(page, '**/api/platform/me');
+  const releaseHealth = await holdRoute(page, '**/api/platform/health');
+  await page.goto('/platform');
+  await expect(page.getByTestId('app-frame-skeleton')).toBeVisible({ timeout: 20000 });
+  releaseMe();
+  await expect(page.getByText('Platform console')).toBeVisible({ timeout: 20000 });
+  await expect(page.getByRole('status', { name: 'Loading health' }).first()).toBeVisible();
+  releaseHealth();
+  await expect(page.getByText('5 AI provider errors in 24 hours.').first()).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole('status', { name: 'Loading health' })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// Customer import + customer fields (docs/progress/customer-import.md, D1 + D2). The file is read in the browser;
+// these tests check what the wizard sends (mapped rows, new fields, private suggestion, consent) and what it shows.
+// ---------------------------------------------------------------------------
+const IMPORT_LIMITS = { planName: 'Growth', rowsPerFile: 10000, fileMb: 5, rowsMonth: 25000, monthLeft: 25000, contactsLeft: 900, newLeft: 900, newLeftReason: 'Your Growth plan allows 25,000 new people per month by import.' };
+const IMPORT_FIELDS = { success: true, ready: true, fields: [{ key: 'branch', label: 'Branch', type: 'text', options: [], private: false, hidden: false, sort_order: 1 }], max: 25, canEdit: true,
+  types: [['text', 'Text'], ['number', 'Number'], ['amount', 'Amount (₹)'], ['date', 'Date'], ['choice', 'Choice (list)'], ['yesno', 'Yes / No']].map(([key, label]) => ({ key, label })) };
+const IMPORT_ID = 'f0000000-0000-4000-8000-000000000001';
+
+/** A real (tiny) .xlsx file: one sheet, numbers and inline text cells. */
+async function xlsxFile(rows) {
+  const { ZipArchive } = await import('archiver');
+  const { PassThrough } = await import('node:stream');
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const col = i => String.fromCharCode(65 + i);
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((r, ri) => `<row r="${ri + 1}">${r.map((v, ci) => (typeof v === 'number' ? `<c r="${col(ci)}${ri + 1}"><v>${v}</v></c>` : `<c r="${col(ci)}${ri + 1}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`)).join('')}</row>`).join('')}</sheetData></worksheet>`;
+  const files = {
+    '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
+    '_rels/.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+    'xl/workbook.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Customers" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    'xl/_rels/workbook.xml.rels': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+    'xl/worksheets/sheet1.xml': sheet,
+  };
+  const zip = new ZipArchive();
+  const out = new PassThrough();
+  const chunks = [];
+  out.on('data', c => chunks.push(c));
+  const done = new Promise(r => out.on('end', r));
+  zip.pipe(out);
+  for (const [name, text] of Object.entries(files)) zip.append(text, { name });
+  await zip.finalize();
+  await done;
+  return Buffer.concat(chunks);
+}
+
+/** The import API, mocked: records what the wizard sends. */
+async function fakeImportApi(page, { limits = IMPORT_LIMITS, imports = [] } = {}) {
+  const sent = { check: [], start: [], batch: [], finish: [], undo: [] };
+  await page.route('**/api/leads/search', r => r.fulfill({ json: { success: true, total: 1, leads: [LEAD], capped: false } }));
+  await page.route('**/api/imports', r => r.fulfill({ json: { success: true, ready: true, imports, limits, undoDays: 7 } }));
+  await page.route('**/api/customer-fields', r => r.fulfill({ json: IMPORT_FIELDS }));
+  await page.route('**/api/imports/check', r => {
+    const body = r.request().postDataJSON();
+    sent.check.push(body);
+    return r.fulfill({ json: { success: true, results: body.rows.map((row, i) => ({ row: row.row, phone: `91${String(row.phone).replace(/\D/g, '').slice(-10)}`, kind: i === 1 ? 'existing' : 'new' })), limits,
+      warnings: body.rows.some(row => String(row.phone).includes('/')) ? ['1 row has more than one number. Only the first is imported: no room for an "Other numbers" field.'] : [] } });
+  });
+  // The server answers each new field's saved key (here CIBIL's draft key was taken meanwhile).
+  await page.route('**/api/imports/start', r => {
+    sent.start.push(r.request().postDataJSON());
+    const b = r.request().postDataJSON();
+    const keyMap = Object.fromEntries((b.newFields || []).map(f => [f.key, f.key === 'cibil_score' ? 'cibil_score_2' : f.key]));
+    return r.fulfill({ json: { success: true, import: { id: IMPORT_ID }, keyMap, limits } }); });
+  await page.route(`**/api/imports/${IMPORT_ID}/batch`, r => { const b = r.request().postDataJSON(); sent.batch.push(b); return r.fulfill({ json: { success: true, created: b.rows.length - 1, updated: 1, skipped: 0, rejected: [] } }); });
+  await page.route(`**/api/imports/${IMPORT_ID}/finish`, r => { sent.finish.push(r.request().postDataJSON()); return r.fulfill({ json: { success: true, import: { id: IMPORT_ID, status: 'done' } } }); });
+  await page.route(`**/api/imports/${IMPORT_ID}/undo`, r => { sent.undo.push(true); return r.fulfill({ json: { success: true, removed: 2, restored: 1, kept: 0 } }); });
+  return sent;
+}
+
+/** Leads -> Import customers -> choose the file -> map -> options (consent) -> check. */
+async function wizardUpTo(page, file) {
+  await page.goto('/admin/leads');
+  await page.getByRole('button', { name: 'Import customers' }).click();
+  const wiz = page.getByTestId('import-wizard');
+  await expect(wiz).toBeVisible({ timeout: 20000 });
+  await wiz.getByLabel('Customer file').setInputFiles(file);
+  return wiz;
+}
+
+test('import customers (CSV): map columns (private suggested for CIBIL), consent, dry run, import in parts, rows on Leads', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'owner' });
+  const sent = await fakeImportApi(page);
+  const csv = 'Mobile,Customer name,CIBIL Score,Branch,Occupation\n9876543210,Asha,742,Guntur,Teacher\n"+91 91234 56789","Bala, Jr",701,Vizag,Farmer\n';
+  const wiz = await wizardUpTo(page, { name: 'customers.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+  await expect(wiz.getByTestId('file-summary')).toContainText('2 customer rows, 5 columns');
+  await expect(wiz.getByTestId('import-limits')).toContainText('10,000 rows per upload');
+  await wiz.getByRole('button', { name: 'Next: columns' }).click();
+  await expect(wiz.getByLabel('Column Mobile')).toHaveValue('phone');
+  await expect(wiz.getByLabel('Column Customer name')).toHaveValue('name');
+  await expect(wiz.getByLabel('Column Branch')).toHaveValue('field:branch');
+  await expect(wiz.getByLabel('Column CIBIL Score')).toHaveValue('new');
+  await expect(wiz.getByLabel('Type for CIBIL Score')).toHaveValue('number');
+  await expect(wiz.getByLabel('Private CIBIL Score')).toBeChecked();
+  await expect(wiz.getByLabel('Private Occupation')).not.toBeChecked();
+  await wiz.getByRole('button', { name: 'Next: options' }).click();
+  await expect(wiz.getByTestId('run-check')).toBeDisabled();
+  await wiz.getByLabel('Import tag').fill('loans-nov');
+  await wiz.getByLabel('Consent').check();
+  await wiz.getByTestId('run-check').click();
+  await expect(wiz.getByTestId('count-new')).toContainText('1');
+  await expect(wiz.getByTestId('count-existing')).toContainText('1');
+  // The dry run sent mapped rows (not the file) and the new fields; nothing was started.
+  expect(sent.check).toHaveLength(1);
+  expect(sent.check[0].rows[1]).toEqual({ row: 2, phone: '+91 91234 56789', name: 'Bala, Jr', custom: { cibil_score: '701', branch: 'Vizag', occupation: 'Farmer' } });
+  expect(sent.check[0].newFields.map(f => [f.label, f.type, f.private])).toEqual([['CIBIL Score', 'number', true], ['Occupation', 'text', false]]);
+  expect(sent.start).toHaveLength(0);
+  await wiz.getByTestId('run-import').click();
+  await expect(wiz.getByTestId('import-result')).toContainText('1 new · 1 updated');
+  await expect(wiz.getByRole('progressbar', { name: 'Done' })).toHaveAttribute('aria-valuenow', '100');
+  expect(sent.start[0]).toMatchObject({ fileName: 'customers.csv', fileRows: 2, rowFrom: 1, rowTo: 2, consent: true, options: { mode: 'fill', tag: 'loans-nov' } });
+  expect(sent.batch[0].rows).toHaveLength(2);
+  // New-field values go to the key the server saved, never the browser's draft key.
+  expect(sent.batch[0].rows[0].custom).toEqual({ cibil_score_2: '742', branch: 'Guntur', occupation: 'Teacher' });
+  expect(sent.finish[0]).toEqual({ stopped: false });
+  await page.screenshot({ path: 'test-results/import-done.png' });
+  await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByTestId('lead-row')).toHaveCount(1);
+
+  expect(errors.filter(e => !/404/.test(e))).toEqual([]);
+});
+
+test('import customers (Excel .xlsx): read in the browser, numbers kept whole, same mapping', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'manager' });
+  const sent = await fakeImportApi(page);
+  const buffer = await xlsxFile([['Phone', 'Name', 'Loan amount'], [9876543210, 'Asha', '₹3,00,000'], ['+91 91234 56789', 'Bala', 150000]]);
+  await page.goto('/manager/leads');
+  await page.getByRole('button', { name: 'Import customers' }).click();
+  const wiz = page.getByTestId('import-wizard');
+  await wiz.getByLabel('Customer file').setInputFiles({ name: 'loans.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer });
+  await expect(wiz.getByTestId('file-summary')).toContainText('loans.xlsx: 2 customer rows, 3 columns', { timeout: 15000 });
+  await wiz.getByRole('button', { name: 'Next: columns' }).click();
+  await expect(wiz.getByLabel('Type for Loan amount')).toHaveValue('amount');
+  await expect(wiz.getByLabel('Private Loan amount')).toBeChecked();
+  await wiz.getByRole('button', { name: 'Next: options' }).click();
+  await wiz.getByLabel('Consent').check();
+  await wiz.getByTestId('run-check').click();
+  await expect(wiz.getByTestId('count-new')).toBeVisible();
+  expect(sent.check[0].rows.map(r => [r.phone, r.name, r.custom.loan_amount])).toEqual([['9876543210', 'Asha', '₹3,00,000'], ['+91 91234 56789', 'Bala', '150000']]);
+  // A file that only pretends to be Excel is refused.
+  await wiz.getByRole('button', { name: 'Back' }).click();
+  await wiz.getByRole('button', { name: 'Back' }).click();
+  await wiz.getByRole('button', { name: 'Back' }).click();
+  await wiz.getByLabel('Customer file').setInputFiles({ name: 'fake.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from('Phone,Name\n9876543210,A\n') });
+  await expect(wiz.getByRole('alert')).toContainText('Choose a .csv or .xlsx file');
+  expect(errors.filter(e => !/404/.test(e))).toEqual([]);
+});
+
+test('import over the plan\'s rows per file: "Rows 1–3 now", continue from the next row, and Undo from the history', async ({ page }) => {
+  await fakeBackend(page, { role: 'owner' });
+  const earlier = { id: IMPORT_ID, fileName: 'big.csv', fileRows: 5, rowFrom: 1, rowTo: 3, status: 'done', mode: 'fill', tag: '', created: 2, updated: 1, skipped: 0, rejected: 0, by: 'owner@e2e.test', createdAt: NOW, canUndo: true, undoUntil: NOW, undoResult: null };
+  const sent = await fakeImportApi(page, { limits: { ...IMPORT_LIMITS, rowsPerFile: 3 }, imports: [earlier] });
+  const csv = `Phone,Name\n${[1, 2, 3, 4, 5].map(i => `987654321${i},Person ${i}`).join('\n')}\n`;
+  const wiz = await wizardUpTo(page, { name: 'big.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+  const over = wiz.getByTestId('over-file-limit');
+  await expect(over).toContainText('Your file has 5 rows; your plan allows 3 per upload. Rows 1–3 now');
+  await expect(over).toContainText('Continue from row 4');
+  await wiz.getByTestId('continue-from').click();
+  await expect(wiz.getByLabel('Start from row')).toHaveValue('4');
+  await expect(over).toContainText('Rows 4–5 now');
+  await wiz.getByRole('button', { name: 'Next: columns' }).click();
+  await wiz.getByRole('button', { name: 'Next: options' }).click();
+  await wiz.getByLabel('Consent').check();
+  await wiz.getByTestId('run-check').click();
+  await expect(wiz.getByTestId('count-new')).toBeVisible();
+  expect(sent.check[0].rows.map(r => r.row)).toEqual([4, 5]);
+  // History: Undo, after an "Are you sure?".
+  await page.getByRole('tab', { name: 'History and undo' }).click();
+  const item = page.getByTestId('import-item');
+  await expect(item).toContainText('big.csv');
+  await expect(item).toContainText('rows 1–3 of 5');
+  await item.getByRole('button', { name: 'Undo' }).click();
+  await page.getByRole('button', { name: 'Undo import' }).click();
+  await expect(page.getByText('Undone: 2 removed, 1 put back')).toBeVisible();
+  expect(sent.undo).toHaveLength(1);
+});
+
+test('customer details card: an agent sees normal fields read-only and "Hidden" for private ones; the number is never in an address', async ({ page }) => {
+  const errors = watchErrors(page);
+  await fakeBackend(page, { role: 'agent' });
+  const asked = [];
+  await page.route('**/api/customer-details', r => {
+    asked.push({ url: r.request().url(), body: r.request().postDataJSON() });
+    return r.fulfill({ json: { success: true, canEdit: false, importName: 'loans-nov', fields: [
+      { key: 'cibil', label: 'CIBIL score', type: 'number', options: [], private: true, hidden: true, value: null },
+      { key: 'loan', label: 'Loan amount', type: 'amount', options: [], private: false, hidden: false, value: 300000 },
+      { key: 'branch', label: 'Branch', type: 'text', options: [], private: false, hidden: false, value: 'Guntur' },
+    ] } });
+  });
+  await page.goto('/agent/inbox');
+  await page.locator('[data-testid="chat-row"]').first().click({ timeout: 20000 });
+  const card = page.getByTestId('customer-details');
+  await expect(card).toContainText('Branch');
+  await expect(card).toContainText('Guntur');
+  await expect(card).toContainText('₹3,00,000');
+  await expect(card.getByText('Hidden')).toBeVisible();
+  await expect(card).toContainText('Imported · loans-nov');
+  await expect(card.getByRole('button', { name: 'Edit customer details' })).toHaveCount(0);
+  expect(asked[0].body).toEqual({ phone: LEAD.phone });
+  expect(asked.every(a => !a.url.includes(LEAD.phone))).toBe(true);
+  // Agents don't get the Settings screen.
+  await page.goto('/agent/settings/customer-fields');
+  await expect(page.getByTestId('customer-fields')).toHaveCount(0);
+  expect(errors.filter(e => !/404/.test(e))).toEqual([]);
+});
+
+test('Settings -> Customer fields (managers): list, add a private choice field, the details card edits values', async ({ page }) => {
+  await fakeBackend(page, { role: 'manager' });
+  const added = [];
+  await page.route('**/api/customer-fields', r => {
+    if (r.request().method() === 'POST') { added.push(r.request().postDataJSON()); return r.fulfill({ json: { success: true, fields: IMPORT_FIELDS.fields, field: { key: 'loan_type' } } }); }
+    return r.fulfill({ json: IMPORT_FIELDS });
+  });
+  await page.goto('/manager/settings/customer-fields');
+  const screen = page.getByTestId('customer-fields');
+  await expect(screen.getByTestId('field-row')).toHaveCount(1, { timeout: 20000 });
+  await screen.getByPlaceholder('e.g. CIBIL score').fill('Loan type');
+  await screen.getByLabel('Type of the new field').selectOption('choice');
+  await screen.getByPlaceholder('Home, Car, Personal').fill('Home, Car');
+  await screen.getByText('Private: only managers and the Business Admin see it').click();
+  await screen.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect.poll(() => added.length).toBe(1);
+  expect(added[0]).toEqual({ label: 'Loan type', type: 'choice', private: true, options: ['Home', 'Car'] });
+  // The card in the chat: a manager edits.
+  const saves = [];
+  await page.route('**/api/customer-details', r => r.fulfill({ json: { success: true, canEdit: true, fields: [{ key: 'branch', label: 'Branch', type: 'text', options: [], private: false, hidden: false, value: 'Guntur' }] } }));
+  await page.route('**/api/customer-details/save', r => { saves.push(r.request().postDataJSON()); return r.fulfill({ json: { success: true, canEdit: true, fields: [{ key: 'branch', label: 'Branch', type: 'text', options: [], private: false, hidden: false, value: 'Vizag' }] } }); });
+  await page.goto('/manager/inbox');
+  await page.locator('[data-testid="chat-row"]').first().click({ timeout: 20000 });
+  const card = page.getByTestId('customer-details');
+  await card.getByRole('button', { name: 'Edit customer details' }).click();
+  await card.getByLabel('Branch').fill('Vizag');
+  await card.getByRole('button', { name: 'Save' }).click();
+  await expect(card).toContainText('Vizag');
+  expect(saves[0]).toEqual({ phone: LEAD.phone, values: { branch: 'Vizag' } });
+});
+
+test('import dry run: a cell with two numbers shows the "only the first is imported" warning', async ({ page }) => {
+  await fakeBackend(page, { role: 'owner' });
+  await fakeImportApi(page);
+  const wiz = await wizardUpTo(page, { name: 'two.csv', mimeType: 'text/csv', buffer: Buffer.from('Phone,Name\n9876543210 / 9123456789,Asha\n') });
+  await wiz.getByRole('button', { name: 'Next: columns' }).click();
+  await wiz.getByRole('button', { name: 'Next: options' }).click();
+  await wiz.getByLabel('Consent').check();
+  await wiz.getByTestId('run-check').click();
+  await expect(wiz.getByTestId('check-warning')).toContainText('Only the first is imported');
 });

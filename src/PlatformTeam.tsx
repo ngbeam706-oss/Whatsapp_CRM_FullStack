@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { UsersRound, UserPlus, Trash2, ShieldAlert } from 'lucide-react';
 import { useConfirm } from './confirm';
 import { api, errorMessage, inputCls, inputInlineCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonRows } from './ui';
 import { PLATFORM_ROLE_LABEL, type PlatformRole } from './appRoutes';
 import type { ShowToast } from './types';
 
@@ -74,8 +75,8 @@ export default function PlatformTeam({ me, showToast }: { me: { email: string };
         <div className="text-xs text-amber-800 flex items-start gap-1.5"><ShieldAlert className="w-3.5 h-3.5 flex-shrink-0 mt-px" /> Recommended: everyone on the platform team turns on two-factor sign-in for their email account (not yet enforced here).</div>
       </form>
 
-      {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-      {!members && !error && <div className="text-sm text-slate-500">Loading…</div>}
+      {error && <LoadError error={error} onRetry={load} />}
+      {!members && !error && <SkeletonRows rows={3} label="Loading the platform team" />}
       {members && (
         <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100" data-testid="platform-team-list">
           {members.map(m => {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Send, CheckCircle2, AlertTriangle, Clock, ExternalLink, Save } from 'lucide-react';
 import { api, errorMessage, inputCls, btnPrimary } from './broadcastUtils';
+import { LoadError, SkeletonRows } from './ui';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import type { ShowToast } from './types';
 
@@ -57,8 +58,8 @@ export default function AdConversions({ isOwner, showToast }: { isOwner: boolean
           that this ad click became a booking. Meta then learns which people book, not just chat, and shows your ads to more people
           like them. Only Meta&apos;s own ad-click id is sent: no names, phone numbers or messages.
         </p>
-        {error && <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-red-700">{error}</div>}
-        {!data && !error && <div className="text-slate-500">Loading…</div>}
+        {error && <LoadError error={error} onRetry={() => q.refetch()} />}
+        {!data && !error && <SkeletonRows rows={3} label="Loading bookings to Meta" />}
         {data && !data.settings.tableReady && (
           <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900">This needs the database update for Ads E (SQL 20261125). Ask the platform team.</div>
         )}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from './confirm';
 import { UserPlus, Check, X, Mail, Phone, MapPin, Users, MessageSquare } from 'lucide-react';
 import { api, errorMessage, btnPrimary, btnSecondary, inputCls } from './broadcastUtils';
+import { LoadError, SkeletonRows } from './ui';
 import type { Plan } from './platformTypes';
 import type { ShowToast } from './types';
 
@@ -73,8 +74,8 @@ export default function PlatformSignups({ plans, showToast, onApproved }: { plan
         </div>
       </div>
       <p className="text-xs text-slate-500">From the public &quot;Get started&quot; page. Approving creates the business and emails the contact an invite to set their password. Requests are deleted automatically 30 days after approval and 90 days after declining.</p>
-      {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-      {!rows && !error && <div className="text-sm text-slate-500">Loading…</div>}
+      {error && <LoadError error={error} onRetry={load} />}
+      {!rows && !error && <SkeletonRows rows={4} label="Loading" />}
       {rows && rows.length === 0 && <div className="p-6 bg-white border border-slate-200 rounded-xl text-sm text-slate-500 text-center">No {status === 'rejected' ? 'declined' : status} requests.</div>}
       <ul className="space-y-3">
         {(rows || []).map(r => (

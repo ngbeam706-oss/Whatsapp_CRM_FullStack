@@ -327,7 +327,7 @@ async function updateDetails(admin, rawId, input = {}) {
   return { business: res.data[0] };
 }
 
-const LIMIT_FIELDS = ['max_staff', 'max_contacts', 'max_broadcasts_month', 'max_automations', 'max_ai_replies_month', 'max_keyword_rules', 'analytics_days', 'max_whatsapp_numbers'];
+const LIMIT_FIELDS = ['max_staff', 'max_contacts', 'max_broadcasts_month', 'max_automations', 'max_ai_replies_month', 'max_keyword_rules', 'analytics_days', 'max_whatsapp_numbers', 'max_custom_fields', 'max_import_rows_per_file', 'max_import_file_mb', 'max_import_rows_month'];
 
 /**
  * Per-business changes to the plan's limits. A key that is left out uses the plan's value;

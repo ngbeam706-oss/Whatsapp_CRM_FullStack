@@ -403,6 +403,8 @@ async function processDueRuns({ deadlineMs = 10000, batchSize = 25, concurrency 
       pushMessage(item, biz);
       broadcastEvent('message', item, biz);
       await logMessage(biz, item);
+      // An imported person who was never contacted counts as contacted from now on (server/leadImport.cjs).
+      await require('./leadImport.cjs').markContacted(biz, String(r.phone));
     });
 
     if (batch.length < batchSize) break;

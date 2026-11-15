@@ -6,7 +6,7 @@ import {
   type Priority, type Query, type QueryEvent, type QueryStage,
 } from './queryUtils';
 import { useVisiblePolling, REFRESH } from './usePolling';
-import { useEscape } from './ui';
+import { LoadError, SkeletonRows, useEscape } from './ui';
 import type { ShowToast } from './types';
 
 /** A platform_queries row as the console sees it (the business's name is added by the server). */
@@ -66,8 +66,8 @@ export default function PlatformSupport({ me, showToast }: { me: { email: string
         </select>
         <button onClick={load} className="p-1 text-slate-500 hover:text-slate-800 cursor-pointer" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
       </div>
-      {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-      {!rows && !error && <div className="text-sm text-slate-500">Loading…</div>}
+      {error && <LoadError error={error} onRetry={load} />}
+      {!rows && !error && <SkeletonRows rows={4} label="Loading" />}
       {rows && shown.length === 0 && <div className="bg-white border border-slate-200 rounded-xl p-6 text-center text-sm text-slate-500">Nothing here.</div>}
       {shown.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
@@ -108,7 +108,7 @@ function SupportDetail({ id, me, showToast, onChanged, onClose }: SupportDetailP
     try { const r = await api<SupportDetailData>(`/api/platform/support/${id}`, { method: 'PATCH', body }); setD(r); onChanged(); if (msg) showToast(msg); return true; } catch (e) { showToast(errorMessage(e)); return false; } finally { setBusy(false); }
   };
 
-  if (!d) return <Panel onClose={onClose}><div className="p-6 text-sm text-slate-500">Loading…</div></Panel>;
+  if (!d) return <Panel onClose={onClose}><div className="p-4"><SkeletonRows rows={4} label="Loading the query" /></div></Panel>;
   const q = d.query;
   return (
     <Panel onClose={onClose}>

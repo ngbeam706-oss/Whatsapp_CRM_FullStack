@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ClipboardList, Users, LifeBuoy, BarChart3, Settings, AlertTriangle, LayoutList, Columns3, RefreshCw, Plus, Save, type LucideIcon } from 'lucide-react';
 import { api, errorMessage, inputCls, inputInlineCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonRows, SkeletonCards, SkeletonForm, EmptyState } from './ui';
 import {
   QUERY_STAGES, OPEN_QUERY_STAGES, QUERY_STAGE_INFO, PRIORITIES, PRIORITY_INFO, SOURCE_LABEL, ADDRESSED_LABEL, dueText, ago,
   type Priority, type Query, type QuerySettings as QuerySettingsData, type QueryStage,
@@ -193,9 +194,9 @@ function QueryList({ view, me, onOpen, onCounts, reloadSignal }: QueryListProps)
         <button onClick={load} title="Refresh" className="p-1 text-slate-500 hover:text-slate-800 cursor-pointer"><RefreshCw className="w-4 h-4" /></button>
       </div>
 
-      {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-      {!rows && !error && <div className="text-sm text-slate-500">Loading…</div>}
-      {rows && shown.length === 0 && <div className="bg-white border border-slate-200 rounded-xl p-6 text-center text-sm text-slate-500">No queries here. {f.stage === 'open' ? 'Nothing open: well done!' : ''}</div>}
+      {error && <LoadError error={error} onRetry={() => listQuery.refetch()} />}
+      {!rows && !error && <SkeletonRows rows={5} label="Loading queries" />}
+      {rows && shown.length === 0 && <EmptyState icon={ClipboardList} title="No queries here" text={f.stage === 'open' ? 'Nothing open: well done!' : 'Change the filters to see more.'} />}
 
       {rows && shown.length > 0 && layout === 'list' && (
         <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
@@ -266,8 +267,8 @@ function Insights() {
   const d = stats.data || null;
   const error = errorOf(stats);
 
-  if (error) return <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>;
-  if (!d) return <div className="text-sm text-slate-500">Loading…</div>;
+  if (error) return <LoadError error={error} onRetry={() => stats.refetch()} />;
+  if (!d) return <SkeletonCards count={4} label="Loading insights" />;
   const hrs = (h: number | null | undefined) => (h === null || h === undefined ? '–' : h < 1 ? `${Math.round(h * 60)} min` : h < 48 ? `${h} h` : `${Math.round(h / 24 * 10) / 10} days`);
 
   return (
@@ -349,7 +350,8 @@ function QuerySettings({ showToast }: { showToast: ShowToast }) {
   const [newCat, setNewCat] = useState<Record<CategoryKind, string>>({ customer: '', internal: '' });
   const [busy, setBusy] = useState('');
 
-  const load = useCallback(() => api<QuerySettingsData>('/api/queries/settings').then(r => { setS(r); setHours(r.dueHours); }).catch(e => showToast(errorMessage(e))), [showToast]);
+  const [loadError, setLoadError] = useState('');
+  const load = useCallback(() => api<QuerySettingsData>('/api/queries/settings').then(r => { setS(r); setHours(r.dueHours); setLoadError(''); }).catch(e => { setLoadError(errorMessage(e)); showToast(errorMessage(e)); }), [showToast]);
   useEffect(() => { load(); }, [load]);
 
   const saveHours = async () => {
@@ -361,7 +363,8 @@ function QuerySettings({ showToast }: { showToast: ShowToast }) {
     try { await api('/api/queries/settings/categories', { method: 'POST', body: { kind, name, active } }); await load(); showToast(active ? `"${name}" is on` : `"${name}" switched off`); } catch (e) { showToast(errorMessage(e)); } finally { setBusy(''); }
   };
 
-  if (!s || !hours) return <div className="text-sm text-slate-500">Loading…</div>;
+  if (loadError && !s) return <LoadError error={loadError} onRetry={load} />;
+  if (!s || !hours) return <SkeletonForm fields={3} label="Loading query settings" />;
   return (
     <div className="grid md:grid-cols-2 gap-3">
       <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">

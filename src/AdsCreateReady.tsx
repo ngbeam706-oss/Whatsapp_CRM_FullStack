@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Sparkles, CheckCircle2, XCircle, HelpCircle, ExternalLink, RotateCw, Save, Plus } from 'lucide-react';
 import { api, errorMessage, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
+import { LoadError, SkeletonRows } from './ui';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import AdCreateWizard, { LaunchBox, type CreatedLaunch, type AdNumber, type AdTemplate, type AddTo, type Limits } from './AdCreateWizard';
 import AdEditDialog, { type LaunchSpec } from './AdEditDialog';
@@ -60,8 +61,8 @@ export default function AdsCreateReady({ isOwner, showToast }: { isOwner: boolea
             Create a simple "message us on WhatsApp" ad here (picture, text, area, daily budget) without opening Meta Ads
             Manager. It's created switched off; you launch it when you're happy. Meta needs a few things first; this checks them.
           </p>
-          {error && <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-          {!data && !error && <div className="text-xs text-slate-500">Asking Meta…</div>}
+          {error && <LoadError error={error} onRetry={() => q.refetch()} />}
+          {!data && !error && <SkeletonRows rows={4} label="Asking Meta…" />}
           {data && (
             <>
               <ul className="space-y-2">

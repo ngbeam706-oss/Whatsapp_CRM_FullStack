@@ -77,6 +77,7 @@ function seed() {
     contact_events: [{ business_id: SUN, phone: '919000000002', event_type: 'order_enquiry' }],
     automation_runs: [{ business_id: SUN, phone: '919000000002' }], campaign_recipients: [{ business_id: SUN, phone: '919000000002' }],
     lead_number_windows: [], whatsapp_calls: [{ business_id: SUN, phone: '919000000002', recording_path: `${SUN}/call1.webm` }], ad_conversions: [],
+    lead_import_changes: [{ import_id: 'imp1', business_id: SUN, phone: '919000000002', before: { cols: { name: 'Old' }, custom: {} } }, { import_id: 'imp9', business_id: LOTUS, phone: '919000000002', before: { cols: {}, custom: {} } }],
     queries: [{ id: 'q1', business_id: SUN, contact_phone: '919000000002', subject: 'Refund' }],
     lead_suppressions: [], audit_log: [], usage_counters: [],
   };
@@ -203,13 +204,14 @@ test('delete: typed count required, removes the lead\'s data and files in this b
   assert.equal(ok.status, 200, ok.text);
   assert.deepEqual([ok.json.deleted, ok.json.suppressed], [1, 1]);
   const sun = (t, col = 'phone') => db[t].filter(r => r.business_id === SUN && r[col] === '919000000002').length;
-  for (const [t, col] of [['whatsapp_leads', 'phone'], ['whatsapp_messages', 'contact_phone'], ['lead_notes', 'phone'], ['contact_events', 'phone'], ['automation_runs', 'phone'], ['campaign_recipients', 'phone'], ['whatsapp_calls', 'phone']]) {
+  for (const [t, col] of [['whatsapp_leads', 'phone'], ['whatsapp_messages', 'contact_phone'], ['lead_notes', 'phone'], ['contact_events', 'phone'], ['automation_runs', 'phone'], ['campaign_recipients', 'phone'], ['whatsapp_calls', 'phone'], ['lead_import_changes', 'phone']]) {
     assert.equal(sun(t, col), 0, `${t} still has the deleted lead`);
   }
   assert.equal(db.queries[0].contact_phone, null, 'the query stays but is unlinked');
   // The other business's lead with the same number is untouched.
   assert.ok(db.whatsapp_leads.some(l => l.business_id === LOTUS && l.phone === '919000000002'));
   assert.ok(db.lead_notes.some(n => n.business_id === LOTUS));
+  assert.ok(db.lead_import_changes.some(c => c.business_id === LOTUS), 'the other business keeps its import history');
   assert.ok(db.whatsapp_messages.some(m => m.business_id === LOTUS));
   assert.deepEqual(storageDeletes, [{ bucket: 'inbox-media', paths: [`${SUN}/919000000002/photo.jpg`] }, { bucket: 'wa-call-recordings', paths: [`${SUN}/call1.webm`] }]);
   // Suppression: a hash, never the number.

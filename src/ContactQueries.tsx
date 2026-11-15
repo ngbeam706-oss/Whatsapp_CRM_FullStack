@@ -5,6 +5,7 @@ import { useApi, refreshApi } from './queryClient';
 import { QUERY_STAGE_INFO, PRIORITIES, PRIORITY_INFO, dueText, type Priority, type Query, type QueryStage } from './queryUtils';
 import QueryDetail from './QueryDetail';
 import type { Me, ShowToast } from './types';
+import { LoadError, SkeletonRows } from './ui';
 
 const NO_QUERIES: Query[] = [];
 const NO_CATS: string[] = [];
@@ -78,7 +79,8 @@ export default function ContactQueries({ phone, me, showToast }: Props) {
         </form>
       )}
 
-      {list === null ? <div className="text-xs text-slate-400">Loading…</div>
+      {listQuery.error ? <LoadError error={listQuery.error.message} onRetry={() => listQuery.refetch()} />
+        : list === null ? <SkeletonRows rows={2} label="Loading queries" />
         : list.length === 0 ? <div className="text-xs text-slate-400">No queries for this customer.</div>
         : (
           <div className="space-y-1.5">

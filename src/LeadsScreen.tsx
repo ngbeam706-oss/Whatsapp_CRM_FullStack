@@ -1,11 +1,14 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Contact, Download, Trash2, Search, X, UserPlus } from 'lucide-react';
+import { Contact, Download, Trash2, Search, X, UserPlus, FileSpreadsheet, IdCard } from 'lucide-react';
 import { api, errorMessage, inputInlineCls } from './broadcastUtils';
 import { apiFetch } from './apiClient';
 import { refreshApi, useApi } from './queryClient';
 import { useConfirm } from './confirm';
-import { BUTTON, EmptyState, Modal, PageHeader, SkeletonRows } from './ui';
+import { BUTTON, DialogLoading, Drawer, EmptyState, LoadError, Modal, PageHeader, SkeletonTable } from './ui';
+import CustomerDetailsCard from './CustomerDetailsCard';
+// The import wizard (and the Excel reader it loads) downloads only when opened.
+const ImportCustomers = lazy(() => import('./ImportCustomers'));
 import { displayName, shortTime } from './crmUtils';
 import { useLeadStatuses, statusLook } from './leadStatuses';
 import { MoreFilters } from './leadFilters';
@@ -18,10 +21,10 @@ import type { Me, ShowToast, TeamResponse } from './types';
 interface LeadRow {
   phone: string; name: string | null; stage: string; source: string | null; tags: string[] | null; assigned_to: string | null;
   created_at: string | null; last_contacted_at: string | null; opted_out: boolean | null; first_ad_headline: string | null; last_ad_headline: string | null;
-  wa_name?: string | null; returned_at?: string | null; returned_after_days?: number | null;
+  wa_name?: string | null; returned_at?: string | null; returned_after_days?: number | null; imported_at?: string | null;
 }
 interface SearchResult { total: number; leads: LeadRow[]; capped: boolean }
-interface Filters extends MoreFilterValues { status: string; assignee: string; unread: boolean; closed: 'any' | 'open' | 'closed' }
+interface Filters extends MoreFilterValues { status: string; assignee: string; unread: boolean; closed: 'any' | 'open' | 'closed'; imported?: boolean }
 
 const COLUMNS: Array<[string, string]> = [
   ['name', 'Name'], ['waName', 'WhatsApp name'], ['phone', 'Phone'], ['status', 'Status'], ['statusType', 'Status type'], ['source', 'Source'], ['ad', 'Ad'],
@@ -41,7 +44,7 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
   const [q, setQ] = useState('');
   const filters = useMemo(() => ({
     ...moreFilterParams(f), ...(f.status ? { status: f.status } : {}), ...(f.assignee ? { assignee: f.assignee } : {}),
-    ...(f.unread ? { unread: true } : {}), closed: f.closed, ...(q.trim() ? { q: q.trim() } : {}),
+    ...(f.unread ? { unread: true } : {}), ...(f.imported ? { imported: true } : {}), closed: f.closed, ...(q.trim() ? { q: q.trim() } : {}),
   }), [f, q]);
   const result = useQuery<SearchResult, Error>({
     queryKey: ['api', '/api/leads/search', JSON.stringify(filters)],
@@ -52,6 +55,9 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
   const [allMatching, setAllMatching] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [detailsOf, setDetailsOf] = useState<LeadRow | null>(null);
+  const isHospital = !!useApi<{ enabled: boolean }>('/api/clinic/status', { staleTime: 5 * 60000 }).data?.enabled;
   const [busy, setBusy] = useState('');
   const rename = useRenameLead(showToast);
   const shown = data?.leads || [];
@@ -101,7 +107,10 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
     <div className="flex-1 overflow-y-auto bg-slate-100" data-testid="leads-screen">
       <div className="max-w-6xl mx-auto px-4 py-5 space-y-3">
         <PageHeader icon={Contact} title="Leads" help="Everyone who has contacted you or that your team added. Export them, or delete leads for good."
-          actions={<button onClick={() => setAdding(true)} className={BUTTON.secondary}><UserPlus className="w-3.5 h-3.5" /> Add lead</button>} />
+          actions={<>
+            <button onClick={() => setImporting(true)} className={BUTTON.secondary}><FileSpreadsheet className="w-3.5 h-3.5" /> Import customers</button>
+            <button onClick={() => setAdding(true)} className={BUTTON.secondary}><UserPlus className="w-3.5 h-3.5" /> Add lead</button>
+          </>} />
 
         <section className="bg-white border border-slate-200 rounded-xl p-3 space-y-2" aria-label="Filters">
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -122,6 +131,7 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
               <option value="any">Open and done</option><option value="open">Open chats</option><option value="closed">Done chats</option>
             </select>
             <label className="flex items-center gap-1 text-slate-600"><input type="checkbox" checked={f.unread} onChange={e => setFilter({ unread: e.target.checked })} /> Unread</label>
+            <label className="flex items-center gap-1 text-slate-600"><input type="checkbox" checked={!!f.imported} onChange={e => setFilter({ imported: e.target.checked })} /> Imported, not chatted yet</label>
           </div>
           <MoreFilters value={f} onChange={v => setFilter(v)} />
         </section>
@@ -137,8 +147,8 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
           <button onClick={remove} disabled={!count || !!busy} className={BUTTON.danger}><Trash2 className="w-3.5 h-3.5" /> Delete{count ? ` (${count})` : ''}</button>
         </div>
 
-        {result.error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{errorMessage(result.error)}</div>}
-        {result.isLoading && <SkeletonRows rows={5} label="Loading leads" />}
+        {result.error && <LoadError error={errorMessage(result.error)} onRetry={() => result.refetch()} />}
+        {result.isLoading && <SkeletonTable rows={6} cols={5} label="Loading leads" />}
         {data && !shown.length && <EmptyState icon={Contact} title="No leads match" text="Change the filters or the dates." />}
         {shown.length > 0 && (
           <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
@@ -160,6 +170,8 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
                         <RenameButton onClick={() => rename(l, () => { void result.refetch(); })} label={`Rename ${displayName(l)}`} />
                         <ReturnedBadge contact={l} />
                         {otherWaName(l) && <span className="ml-1 text-slate-500">WhatsApp: {otherWaName(l)}</span>}
+                        {l.imported_at && !l.last_contacted_at && <span className="ml-1 text-2xs px-1 rounded border border-sky-200 bg-sky-50 text-sky-700 font-semibold">Imported</span>}
+                        <button onClick={() => setDetailsOf(l)} className="ml-1 text-slate-400 hover:text-wa-teal cursor-pointer align-middle" aria-label={`Details of ${displayName(l)}`}><IdCard className="w-3.5 h-3.5 inline" /></button>
                         {l.opted_out && <span className="ml-1 text-2xs px-1 rounded border border-rose-200 bg-rose-50 text-rose-700 font-semibold">STOP</span>}
                         {(l.tags || []).slice(0, 2).map(t => <span key={t} className="ml-1 text-2xs bg-slate-100 text-slate-600 rounded-full px-1.5">{t}</span>)}</td>
                       <td className="p-2 font-mono text-slate-600">+{l.phone}</td>
@@ -179,6 +191,16 @@ export default function LeadsScreen({ me, showToast, onOpenChat }: { me: Me; sho
       </div>
 
       {showExport && <ExportDialog count={count || data?.total || 0} busy={busy === 'export'} onClose={() => setShowExport(false)} onExport={exportCsv} />}
+      {importing && <Suspense fallback={<DialogLoading label="Loading the import" />}><ImportCustomers onClose={() => { setImporting(false); void result.refetch(); }} showToast={showToast} isHospital={isHospital} /></Suspense>}
+      {detailsOf && (
+        <Drawer title={displayName(detailsOf)} onClose={() => setDetailsOf(null)}>
+          <div className="p-4 space-y-3">
+            <div className="text-xs text-slate-500 font-mono">+{detailsOf.phone}</div>
+            <CustomerDetailsCard phone={detailsOf.phone} showToast={showToast} compact />
+            <button onClick={() => onOpenChat(detailsOf.phone)} className={BUTTON.secondary}>Open the chat</button>
+          </div>
+        </Drawer>
+      )}
       {adding && <AddLeadModal me={me} showToast={showToast} onClose={() => setAdding(false)} onAdded={() => { setAdding(false); refreshApi('/api/leads'); }} />}
     </div>
   );

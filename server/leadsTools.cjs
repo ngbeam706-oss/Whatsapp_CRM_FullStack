@@ -75,7 +75,7 @@ async function unsuppress(biz, phone) {
 // ---------------------------------------------------------------------------
 /**
  * @typedef {{ range: string, from: string, to: string, status: string, statusType: string, source: string, adId: string,
- *   tag: string, assignee: string, unread: boolean, number: string, closed: 'open' | 'closed' | 'any', optedOut: boolean, returning: boolean, q: string }} Filters
+ *   tag: string, assignee: string, unread: boolean, number: string, closed: 'open' | 'closed' | 'any', optedOut: boolean, returning: boolean, imported: boolean, q: string }} Filters
  */
 /** Clean what the browser sent (unknown values are dropped). @param {any} input @returns {Filters} */
 function cleanFilters(input = {}) {
@@ -97,6 +97,7 @@ function cleanFilters(input = {}) {
     closed: f.closed === 'closed' || f.closed === 'open' ? f.closed : 'any',
     optedOut: f.optedOut === true || f.optedOut === 'true',
     returning: f.returning === true || f.returning === 'true',
+    imported: f.imported === true || f.imported === 'true',
     q: s(f.q, 40),
   };
 }
@@ -155,6 +156,8 @@ async function filterParts(biz, f, { staffEmail = '', isManager = false } = {}) 
     if (since) parts.push(`returned_at=gte.${encodeURIComponent(since)}`);
     if (until) parts.push(`returned_at=lt.${encodeURIComponent(until)}`);
   }
+  // Imported by a customer import and never chatted (SQL 20261142; the Inbox leaves them out).
+  if (f.imported) parts.push('imported_at=not.is.null', 'last_contacted_at=is.null');
   if (f.number) {
     // Contacts from before several numbers (no number recorded) belong to the main number.
     const main = await require('./whatsapp.cjs').getWhatsApp(biz);
@@ -212,6 +215,8 @@ async function filterOptions(staff) {
 const LIST_FIELDS = 'phone,name,stage,source,tags,assigned_to,created_at,last_contacted_at,opted_out,first_ad_id,first_ad_headline,last_ad_id,last_ad_headline,unread_count';
 /** The WhatsApp name and "returning" (SQL 20261138), read when the columns exist. */
 const LIST_EXTRA = ',wa_name,name_set_by,returned_at,returned_after_days';
+/** The import marker (SQL 20261142), read when the column exists. */
+const LIST_IMPORT = ',imported_at';
 /** @param {Staff} staff */
 const denied = (staff) => (isManagerOrOwner(staff?.role) ? null : { error: 'Only managers and the Business Admin can use the Leads page.', status: 403 });
 
@@ -225,7 +230,8 @@ async function matching(staff, f, fields, max) {
     const path = (/** @type {string[]} */ closed) => `whatsapp_leads?${[`business_id=eq.${biz}`, ...parts, ...orParams(ors), ...closed, `select=${fields}`, 'order=last_contacted_at.desc.nullslast,phone.asc', `limit=${Math.min(PAGE, max - offset)}`, `offset=${offset}`].join('&')}`;
     const closed = closedPart(f);
     // The WhatsApp name / returning columns when they exist (else the older columns).
-    let r = fields === LIST_FIELDS ? await dbRequest(path(closed).replace(`select=${fields}`, `select=${fields}${LIST_EXTRA}`)) : { ok: false, status: 0, data: null };
+    let r = fields === LIST_FIELDS ? await dbRequest(path(closed).replace(`select=${fields}`, `select=${fields}${LIST_EXTRA}${LIST_IMPORT}`)) : { ok: false, status: 0, data: null };
+    if (!r.ok && fields === LIST_FIELDS) r = await dbRequest(path(closed).replace(`select=${fields}`, `select=${fields}${LIST_EXTRA}`));
     if (!r.ok) r = await dbRequest(path(closed));
     // Before the inbox SQL (20261132) there is no closed_at column: no Done filter then.
     if (!r.ok && closed.length) r = await dbRequest(path([]));
@@ -333,7 +339,40 @@ const audit = (staff, action, details) => dbRequest('audit_log', {
 const LEAD_DATA = [
   ['whatsapp_messages', 'contact_phone'], ['lead_notes', 'phone'], ['contact_events', 'phone'], ['automation_runs', 'phone'],
   ['campaign_recipients', 'phone'], ['lead_number_windows', 'phone'], ['whatsapp_calls', 'phone'], ['ad_conversions', 'phone'],
+  // The old values a customer import kept for Undo (SQL 20261142): personal data, so it goes with the lead.
+  ['lead_import_changes', 'phone'],
 ];
+
+/**
+ * Remove these leads of one business and everything that holds their data: files (inbox media, call recordings, only
+ * in this business's folder), every LEAD_DATA table, then the lead rows; queries stay but are unlinked. Shared by the
+ * Leads page delete and the customer import's Undo (server/leadImport.cjs). No audit here: callers audit.
+ * @param {string} bizId @param {string[]} phones
+ * @returns {Promise<{ deleted: number, error?: undefined } | { error: string, deleted: number }>}
+ */
+async function purgeLeads(bizId, phones) {
+  const biz = requireBusinessId(bizId);
+  const list0 = [...new Set(phones.map(p => digits(p)).filter(p => PHONE_RE.test(p)))];
+  const storage = require('./storage.cjs');
+  for (let i = 0; i < list0.length; i += CHUNK) {
+    const list = list0.slice(i, i + CHUNK).join(',');
+    // Files first (only paths in this business's folder).
+    const media = await dbRequest(`whatsapp_messages?business_id=eq.${biz}&contact_phone=in.(${list})&media_path=not.is.null&select=media_path`);
+    const files = (media.ok && Array.isArray(media.data) ? media.data : []).map((/** @type {Row} */ m) => String(m.media_path)).filter(p => p.startsWith(`${biz}/`));
+    if (files.length) await storage.remove('inbox-media', files);
+    const rec = await dbRequest(`whatsapp_calls?business_id=eq.${biz}&phone=in.(${list})&recording_path=not.is.null&select=recording_path`);
+    const recs = (rec.ok && Array.isArray(rec.data) ? rec.data : []).map((/** @type {Row} */ c) => String(c.recording_path)).filter(p => p.startsWith(`${biz}/`));
+    if (recs.length) await storage.remove('wa-call-recordings', recs);
+    for (const [table, col] of LEAD_DATA) {
+      await dbRequest(`${table}?business_id=eq.${biz}&${col}=in.(${list})`, { method: 'DELETE', prefer: 'return=minimal' });
+    }
+    // Queries stay (they are the team's record) but no longer point at the deleted contact.
+    await dbRequest(`queries?business_id=eq.${biz}&contact_phone=in.(${list})`, { method: 'PATCH', prefer: 'return=minimal', body: { contact_phone: null } });
+    const del = await dbRequest(`whatsapp_leads?business_id=eq.${biz}&phone=in.(${list})`, { method: 'DELETE', prefer: 'return=minimal' });
+    if (!del.ok) return { error: 'Some leads could not be deleted. Try again.', deleted: i };
+  }
+  return { deleted: list0.length };
+}
 
 /**
  * Permanently delete leads of this business: the selected ones (body.phones) or everything matching body.filters.
@@ -355,7 +394,6 @@ async function deleteLeads(staff, body = {}) {
   if (Number(body.confirmCount) !== leads.length) return { error: `Type ${leads.length} to confirm.`, status: 400, count: leads.length };
 
   const phones = leads.map(l => String(l.phone));
-  const storage = require('./storage.cjs');
   // STOP numbers: remembered (hash only) before anything is removed.
   const stopped = leads.filter(l => l.opted_out).map(l => String(l.phone));
   if (stopped.length) {
@@ -365,23 +403,8 @@ async function deleteLeads(staff, body = {}) {
     });
     if (!sup.ok) return { error: 'Could not keep the STOP list. Has the leads tools SQL (20261135) been run? Nothing was deleted.' };
   }
-  for (let i = 0; i < phones.length; i += CHUNK) {
-    const list = phones.slice(i, i + CHUNK).join(',');
-    // Files first (only paths in this business's folder).
-    const media = await dbRequest(`whatsapp_messages?business_id=eq.${biz}&contact_phone=in.(${list})&media_path=not.is.null&select=media_path`);
-    const files = (media.ok && Array.isArray(media.data) ? media.data : []).map((/** @type {Row} */ m) => String(m.media_path)).filter(p => p.startsWith(`${biz}/`));
-    if (files.length) await storage.remove('inbox-media', files);
-    const rec = await dbRequest(`whatsapp_calls?business_id=eq.${biz}&phone=in.(${list})&recording_path=not.is.null&select=recording_path`);
-    const recs = (rec.ok && Array.isArray(rec.data) ? rec.data : []).map((/** @type {Row} */ c) => String(c.recording_path)).filter(p => p.startsWith(`${biz}/`));
-    if (recs.length) await storage.remove('wa-call-recordings', recs);
-    for (const [table, col] of LEAD_DATA) {
-      await dbRequest(`${table}?business_id=eq.${biz}&${col}=in.(${list})`, { method: 'DELETE', prefer: 'return=minimal' });
-    }
-    // Queries stay (they are the team's record) but no longer point at the deleted contact.
-    await dbRequest(`queries?business_id=eq.${biz}&contact_phone=in.(${list})`, { method: 'PATCH', prefer: 'return=minimal', body: { contact_phone: null } });
-    const del = await dbRequest(`whatsapp_leads?business_id=eq.${biz}&phone=in.(${list})`, { method: 'DELETE', prefer: 'return=minimal' });
-    if (!del.ok) return { error: 'Some leads could not be deleted. Try again.', deleted: i };
-  }
+  const purged = await purgeLeads(biz, phones);
+  if (purged.error !== undefined) return purged;
   await audit(staff, 'leads.deleted', { count: phones.length, keptStop: stopped.length, selection: bySelection, ...(bySelection ? {} : { filters: auditFilters(f) }) });
   return { deleted: phones.length, suppressed: stopped.length };
 }
@@ -390,5 +413,5 @@ module.exports = {
   MAX_EXPORT, MAX_DELETE, SOURCES_ADDED, COLUMNS, DEFAULT_COLUMNS,
   phoneHash, isSuppressed, suppressedAmong, reapply, unsuppress,
   cleanFilters, rangeBounds, istDayStart, filterParts, orParams, filterOptions,
-  search, exportCsv, deleteLeads, csvCell, toCsv,
+  search, exportCsv, deleteLeads, purgeLeads, LEAD_DATA, csvCell, toCsv,
 };

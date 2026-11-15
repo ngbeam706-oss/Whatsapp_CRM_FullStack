@@ -31,6 +31,8 @@ app.use(cors({ origin: allowedOrigins.length ? allowedOrigins : false }));
 app.use('/api/ads/create/image', express.json({ limit: '2mb' }));
 // A doctor's case-sheet photo (server/clinicPatients.cjs, at most 4 MB of image): only the upload route.
 app.post('/api/doctor/appointments/:id/sheets', express.json({ limit: '6mb' }));
+// Customer import batches (server/leadImport.cjs): up to 500 mapped rows per request, a few MB of JSON at most.
+app.use('/api/imports', express.json({ limit: '6mb' }));
 // Keep the raw body: the webhook signature is computed over the exact bytes Meta sent.
 app.use(express.json({
   limit: '1mb',
@@ -119,7 +121,7 @@ app.use('/api/platform', apiAuthGuard, require('./platformRoutes.cjs'));
 app.post('/api/client-errors', apiAuthGuard, rateLimit({ name: 'client_errors', windowMs: 60000, max: 10 }), requireStaff, clientErrorRoute);
 
 // ---- Staff only: dashboard API (closed while the platform is under maintenance) ----
-app.use('/api', apiAuthGuard, maintenance.gate, requireStaff, apiRoutes, broadcastRoutes, automationRoutes, inboxRoutes, whatsappRoutes, queryRoutes, adsRoutes, require('./waCallRoutes.cjs'), require('./staffRoutes.cjs'), clinicRoutes.staffRouter);
+app.use('/api', apiAuthGuard, maintenance.gate, requireStaff, apiRoutes, broadcastRoutes, automationRoutes, inboxRoutes, whatsappRoutes, queryRoutes, adsRoutes, require('./waCallRoutes.cjs'), require('./staffRoutes.cjs'), clinicRoutes.staffRouter, require('./importRoutes.cjs'));
 
 // ---- Fallbacks -------------------------------------------------------------
 app.use((req, res) => {

@@ -8,7 +8,7 @@ import type { Role } from './types';
 
 export type View =
   | 'home' | 'chat' | 'pipeline' | 'queries' | 'broadcasts' | 'flow' | 'bot_config' | 'analytics' | 'ads' | 'ai' | 'team' | 'whatsapp' | 'setup' | 'profile'
-  | 'lead_statuses' | 'leads' | 'lead_assignment' | 'appointments' | 'clinic';
+  | 'lead_statuses' | 'leads' | 'lead_assignment' | 'appointments' | 'clinic' | 'custom_fields';
 
 /** 'doctor': clinic doctors (separate logins, not staff): their own appointments and hours only (src/DoctorApp.tsx). */
 export type Area = 'platform' | 'admin' | 'manager' | 'agent' | 'doctor';
@@ -39,6 +39,7 @@ export const SCREENS: Record<View, { path: string; managers: boolean; group: 'wo
   team: { path: 'settings/team', managers: true, group: 'settings' },
   lead_statuses: { path: 'settings/lead-statuses', managers: true, group: 'settings' },
   lead_assignment: { path: 'settings/lead-assignment', managers: true, group: 'settings' },
+  custom_fields: { path: 'settings/customer-fields', managers: true, group: 'settings' },
   clinic: { path: 'settings/clinic', managers: true, group: 'settings' },
   flow: { path: 'settings/bot-flow', managers: true, group: 'settings' },
   bot_config: { path: 'settings/keywords', managers: true, group: 'settings' },

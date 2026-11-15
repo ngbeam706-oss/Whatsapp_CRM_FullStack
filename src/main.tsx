@@ -2,13 +2,12 @@ import { StrictMode, lazy, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route } from 'react-router'
 import './index.css'
-import Dashboard from './Dashboard'
 import ErrorBoundary from './ErrorBoundary'
 import { queryClient } from './queryClient'
 import { supabase } from './supabaseClient'
 import { isPublicPath } from './site/siteNav'
 import { AREAS, LEGACY_BASE } from './appRoutes'
-import { readLargeText, applyLargeText } from './ui'
+import { readLargeText, applyLargeText, AppFrameSkeleton, SiteSkeleton } from './ui'
 import { ConfirmProvider } from './confirm'
 
 // Signing out (or in as someone else) must never show the previous login's cached data.
@@ -23,8 +22,10 @@ supabase.auth.onAuthStateChange((event, session) => {
 // "Larger text" chosen earlier in this browser (profile menu): applied before the first paint.
 if (readLargeText()) applyLargeText(true)
 
-// Only visitors load the public site.
+// Only visitors load the public site; only signed-in addresses load the dashboard (each downloads when opened,
+// with a skeleton meanwhile, so neither slows the other's first paint).
 const PublicSite = lazy(() => import('./site/PublicSite'))
+const Dashboard = lazy(() => import('./Dashboard'))
 
 // Invite and password-reset emails land on the site's main address with the login details in the link:
 // those go to the dashboard (with the details), so the links keep working.
@@ -46,9 +47,9 @@ createRoot(document.getElementById('root') as HTMLElement).render(
         <ConfirmProvider>
         <Routes>
           {/* Signed-in areas, one per role (/platform, /admin, /manager, /agent) plus the old /app: see Dashboard. */}
-          {[LEGACY_BASE.slice(1), ...AREAS].map(a => <Route key={a} path={`/${a}/*`} element={<Dashboard />} />)}
+          {[LEGACY_BASE.slice(1), ...AREAS].map(a => <Route key={a} path={`/${a}/*`} element={<Suspense fallback={<AppFrameSkeleton />}><Dashboard /></Suspense>} />)}
           {/* The public website: /, /pricing, /privacy, ... (and its "page not found"). */}
-          <Route path="*" element={<Suspense fallback={null}><PublicSite /></Suspense>} />
+          <Route path="*" element={<Suspense fallback={<SiteSkeleton />}><PublicSite /></Suspense>} />
         </Routes>
         </ConfirmProvider>
       </BrowserRouter>

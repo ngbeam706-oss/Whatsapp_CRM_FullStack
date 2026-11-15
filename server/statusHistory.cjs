@@ -10,7 +10,7 @@ const { requireBusinessId } = require('./tenant.cjs');
  * Record status changes (one row each; unchanged ones are skipped).
  * @param {string} biz
  * @param {Array<{ phone: string, from?: string | null, to: string }>} changes
- * @param {{ by?: string | null, source?: 'staff' | 'bot' | 'added' | 'bulk' | 'returning' }} [meta]
+ * @param {{ by?: string | null, source?: 'staff' | 'bot' | 'added' | 'bulk' | 'returning' | 'import' }} [meta]
  */
 async function record(biz, changes, { by = null, source = 'staff' } = {}) {
   try {

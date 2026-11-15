@@ -1,18 +1,21 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useConfirm } from './confirm';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 import { Target, RotateCw, Link2, Unlink, AlertTriangle, Pause, Play, Wallet, Bell, X, Search, ChevronLeft, ChevronRight, ChevronDown, Megaphone, LayoutList, ArrowRight, Eye, ExternalLink, Image as ImageIcon, BarChart3, Sparkles, BookOpen, Send, Copy, Phone, Filter, Layers, type LucideIcon } from 'lucide-react';
-import AdConversions from './AdConversions';
 import AdsBilling, { AdsOwnership } from './AdsBilling';
 import { api, errorMessage, inputCls, btnPrimary, btnSecondary } from './broadcastUtils';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import type { Role, ShowToast } from './types';
 import MetaSetupGuide from './MetaSetupGuide';
-import MetaOrgGuide from './MetaOrgGuide';
-import AdsCreateReady from './AdsCreateReady';
 import AdsFunnel from './AdsFunnel';
-import AdsManage from './AdsManage';
+import { EmptyState, LoadError, SkeletonCards, SkeletonRows } from './ui';
 import { ADS_GUIDE } from './metaGuides';
+
+// Each tab's code downloads when the tab is first opened (the Ads page is the biggest screen).
+const AdConversions = lazy(() => import('./AdConversions'));
+const MetaOrgGuide = lazy(() => import('./MetaOrgGuide'));
+const AdsCreateReady = lazy(() => import('./AdsCreateReady'));
+const AdsManage = lazy(() => import('./AdsManage'));
 
 // Tabs of the Ads page once an ad account is connected.
 type PageTab = 'results' | 'manage' | 'funnel' | 'create' | 'conversions' | 'guide';
@@ -187,8 +190,8 @@ export default function AdsScreen({ userRole, showToast, basePath }: { userRole:
         )}
       </div>
 
-      {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-      {!data && !error && <div className="text-sm text-slate-500">Loading…</div>}
+      {error && <LoadError error={error} onRetry={() => adsQuery.refetch()} />}
+      {!data && !error && <><SkeletonCards count={4} label="Loading ads" /><SkeletonRows rows={3} label="Loading ads" /></>}
 
       {data && !data.adsEnabled && (
         <Notice>Your plan does not include the Ads module. Ask the platform to upgrade your plan to Growth or Pro.</Notice>
@@ -223,8 +226,10 @@ export default function AdsScreen({ userRole, showToast, basePath }: { userRole:
               <NeedsAttention showToast={showToast} numbers={report?.adNumbers} />
               {data.reportError && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{data.reportError}</div>}
               {report && <Results report={report} alertSettings={account.alerts} onChanged={() => load()} showToast={showToast} />}
+              {!report && !data.reportError && <EmptyState icon={BarChart3} title="No ad results yet" text="Results appear after the first sync with Meta (about once an hour), or press Sync now." />}
             </>
           )}
+          <Suspense fallback={<SkeletonRows rows={4} label="Loading this tab" />}>
           {view === 'manage' && <AdsManage showToast={showToast || (() => {})} />}
           {view === 'funnel' && <AdsFunnel showToast={showToast || (() => {})} />}
           {view === 'create' && <AdsCreateReady isOwner={isOwner} showToast={showToast} />}
@@ -235,6 +240,7 @@ export default function AdsScreen({ userRole, showToast, basePath }: { userRole:
               <MetaSetupGuide guide={ADS_GUIDE} defaultOpen={false} />
             </div>
           )}
+          </Suspense>
         </>
       )}
     </Shell>

@@ -3,7 +3,7 @@ import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, Link2, Send, Cop
 import { api, errorMessage, inputCls, inputInlineCls } from './broadcastUtils';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import { useConfirm } from './confirm';
-import { BUTTON, EmptyState, Modal, PageHeader, SkeletonRows } from './ui';
+import { BUTTON, EmptyState, Modal, PageHeader, SkeletonRows, LoadError } from './ui';
 import BookAppointmentModal from './BookAppointmentModal';
 import ClinicCollections from './ClinicCollections';
 import { addDays, APPT_STATUS, dayLabel, PAY_METHOD, rupees, timeOf, todayIst, type Appointment, type Doctor, type FollowUp } from './clinicUtils';
@@ -80,7 +80,7 @@ export default function AppointmentsScreen({ isManager, showToast, onOpenChat }:
             {doctors.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </div>
-        {!list ? (errorOf(q) ? <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{errorOf(q)}</div> : <SkeletonRows rows={4} />)
+        {!list ? (errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : <SkeletonRows rows={4} />)
           : !list.length ? <EmptyState icon={CalendarDays} title="No appointments" text="Nothing booked on this day." />
             : (
               <ul className="space-y-2" aria-label="Appointments">
@@ -157,7 +157,7 @@ function FollowUps({ isManager, showToast, onOpenChat }: { isManager: boolean; s
       {isManager && (
         <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} /> Everyone's follow-ups</label>
       )}
-      {!list ? (errorOf(q) ? <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{errorOf(q)}</div> : <SkeletonRows rows={3} />)
+      {!list ? (errorOf(q) ? <LoadError error={errorOf(q)} onRetry={() => q.refetch()} /> : <SkeletonRows rows={3} />)
         : !list.length ? <EmptyState icon={CalendarDays} title="No follow-ups" text="When a doctor sets a follow-up date, the patient shows here." />
           : (
             <ul className="space-y-2" aria-label="Follow-ups">

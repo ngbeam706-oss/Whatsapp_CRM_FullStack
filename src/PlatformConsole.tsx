@@ -1,19 +1,22 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useConfirm } from './confirm';
 import { Navigate, NavLink, useLocation, useNavigate } from 'react-router';
 import { PLATFORM_TABS, PLATFORM_HOME, PLATFORM_ROLE_LABEL, canOpenPlatformTab, type PlatformRole, type PlatformTab } from './appRoutes';
 import { Building2, Plus, Layers, ShieldCheck, ShieldOff, Smartphone, PauseCircle, PlayCircle, Save, RefreshCw, Lock, LifeBuoy, Activity, ScrollText, Cpu, Send, History, Info, Wrench, UserPlus, Palette, UsersRound, ClipboardCheck, LayoutDashboard, type LucideIcon } from 'lucide-react';
-import PlatformSignups from './PlatformSignups';
-import PlatformBranding from './PlatformBranding';
-import PlatformTeam from './PlatformTeam';
-import PlatformOnboarding from './PlatformOnboarding';
 import { MaintenancePanel, MaintenanceStrip, type MaintenanceState } from './Maintenance';
 import { api, errorMessage, inputCls, inputInlineCls, btnPrimary, btnSecondary } from './broadcastUtils';
-import PlatformSupport from './PlatformSupport';
 import { SignOutButton } from './AuthGate';
 import { AlertsBanner, HealthPanel, EventsPanel, WorkerPanel, DeliveryPanel, AuditPanel, BusinessDrawer } from './PlatformMonitor';
 import type { HealthWithAlerts, LimitKey, Plan, PlatformBusiness, PlatformOverview } from './platformTypes';
 import type { ShowToast } from './types';
+import { AppFrameSkeleton, LoadError, SkeletonCards, SkeletonForm, SkeletonRows } from './ui';
+
+// Tabs that only some platform roles open download when first opened.
+const PlatformSignups = lazy(() => import('./PlatformSignups'));
+const PlatformBranding = lazy(() => import('./PlatformBranding'));
+const PlatformTeam = lazy(() => import('./PlatformTeam'));
+const PlatformOnboarding = lazy(() => import('./PlatformOnboarding'));
+const PlatformSupport = lazy(() => import('./PlatformSupport'));
 
 type Tab = PlatformTab;
 
@@ -55,6 +58,10 @@ const LIMITS: Array<[LimitKey, string]> = [
   ['max_keyword_rules', 'Keyword rules'],
   ['analytics_days', 'Analytics history (days)'],
   ['max_whatsapp_numbers', 'WhatsApp numbers'],
+  ['max_custom_fields', 'Customer fields'],
+  ['max_import_rows_per_file', 'Import rows per file'],
+  ['max_import_file_mb', 'Import file size (MB)'],
+  ['max_import_rows_month', 'Imported people / month'],
 ];
 const num = (n: number | string | null | undefined) => (n === null || n === undefined ? '–' : Number(n).toLocaleString('en-IN'));
 
@@ -67,22 +74,23 @@ export default function PlatformConsole({ base, email, onSignOut }: { base: stri
   // The platform role comes from the server (/api/platform/me), which also checks it on every request.
   const [me, setMe] = useState<{ role: PlatformRole } | null>(null);
   const [meError, setMeError] = useState('');
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     api<{ role?: PlatformRole }>('/api/platform/me')
-      .then(d => setMe({ role: d.role && d.role in PLATFORM_ROLE_LABEL ? d.role : 'owner' }))
+      .then(d => { setMeError(''); setMe({ role: d.role && d.role in PLATFORM_ROLE_LABEL ? d.role : 'owner' }); })
       .catch(e => setMeError(errorMessage(e)));
-  }, []);
+  }, [attempt]);
   if (meError) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center px-4">
         <div className="bg-white rounded-xl shadow p-6 max-w-sm w-full text-center space-y-3">
-          <p className="text-sm text-red-700">{meError}</p>
+          <LoadError error={meError} onRetry={() => setAttempt(n => n + 1)} />
           <div className="flex justify-center"><SignOutButton email={email} onSignOut={onSignOut} /></div>
         </div>
       </div>
     );
   }
-  if (!me) return <div className="min-h-screen bg-slate-100 flex items-center justify-center text-sm text-slate-500">Loading…</div>;
+  if (!me) return <AppFrameSkeleton label="Loading the platform console" />;
   return <Console base={base} email={email} role={me.role} onSignOut={onSignOut} />;
 }
 
@@ -181,9 +189,9 @@ function Console({ base, email, role, onSignOut }: { base: string; email: string
         {tab !== 'maintenance' && <MaintenanceStrip state={maintenance} onOpen={() => setTab(can('maintenance') ? 'maintenance' : tab)} />}
         {tab !== 'health' && seesHealth && <AlertsBanner alerts={health?.alerts} onOpenBusiness={setOpenBusiness} />}
         {!can(tab) ? <TabNotAllowed role={role} home={`${base}/${PLATFORM_HOME[role]}`} /> : (
-          <>
-            {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-            {!data && !error && ['overview', 'businesses', 'signups', 'plans'].includes(tab) && <div className="text-sm text-slate-500">Loading…</div>}
+          <Suspense fallback={<SkeletonRows rows={5} label="Loading this tab" />}>
+            {error && <LoadError error={error} onRetry={load} />}
+            {!data && !error && ['overview', 'businesses', 'signups', 'plans'].includes(tab) && (tab === 'overview' ? <><SkeletonCards count={4} label="Loading the overview" /><SkeletonRows rows={3} label="Loading the overview" /></> : <SkeletonRows rows={5} label="Loading" />)}
             {(tab === 'overview' || (tab === 'health' && isOwner)) && data && <OverviewStrip data={data} waiting={waiting} onBusinesses={openBusinesses} onTab={setTab} />}
             {tab === 'health' && <HealthPanel data={health} error={healthError} reload={loadHealth} onOpenBusiness={setOpenBusiness} />}
             {data && tab === 'businesses' && <Businesses key={bizFilter} data={data} reload={load} showToast={showToast} onOpen={setOpenBusiness} initialFilter={bizFilter} canEdit={isOwner} canCreate={can('signups')} />}
@@ -196,9 +204,9 @@ function Console({ base, email, role, onSignOut }: { base: string; email: string
             {tab === 'delivery' && <DeliveryPanel onOpenBusiness={setOpenBusiness} />}
             {tab === 'audit' && <AuditPanel businesses={data?.businesses} />}
             {tab === 'support' && <PlatformSupport me={{ email }} showToast={showToast} />}
-            {tab === 'maintenance' && <MaintenancePanel key={String(maintenance?.on)} state={maintenance} onChanged={setMaintenance} showToast={showToast} />}
+            {tab === 'maintenance' && (maintenance ? <MaintenancePanel key={String(maintenance.on)} state={maintenance} onChanged={setMaintenance} showToast={showToast} /> : <SkeletonForm fields={2} label="Loading maintenance mode" />)}
             {tab === 'team' && <PlatformTeam me={{ email }} showToast={showToast} />}
-          </>
+          </Suspense>
         )}
       </main>
       </div>

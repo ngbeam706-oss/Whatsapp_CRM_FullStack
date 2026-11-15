@@ -8,7 +8,7 @@ import type { Role, ShowToast } from './types';
 import MetaSetupGuide from './MetaSetupGuide';
 import { WHATSAPP_GUIDE } from './metaGuides';
 import WhatsAppNumbers from './WhatsAppNumbers';
-import { PageHeader, BUTTON } from './ui';
+import { PageHeader, BUTTON, LoadError, SkeletonForm } from './ui';
 import { Radio, Database } from 'lucide-react';
 
 /** GET /api/whatsapp (server/whatsapp.cjs connectionStatus; owner-only fields are absent for others). */
@@ -104,8 +104,8 @@ export default function WhatsAppScreen({ showToast, onShowWebhook, onShowData }:
             </>
           )} />
 
-        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-        {!data && !error && <div className="text-sm text-slate-500">Loading…</div>}
+        {error && <LoadError error={error} onRetry={() => connection.refetch()} />}
+        {!data && !error && <SkeletonForm fields={4} label="Loading the WhatsApp connection" />}
 
         {/* Where the setup stands: three steps, each ticked when done. */}
         {data && isOwner && (

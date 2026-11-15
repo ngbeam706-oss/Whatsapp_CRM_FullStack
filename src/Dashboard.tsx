@@ -6,6 +6,7 @@ import App from './App';
 import AuthGate, { SignOutButton } from './AuthGate';
 import { takeJustSignedIn } from './signInFlag';
 import { queryClient } from './queryClient';
+import { AppFrameSkeleton } from './ui';
 import { AREA_LABEL, AREA_OF_ROLE, LEGACY_BASE, areaOf, type Area } from './appRoutes';
 import type { Role } from './types';
 
@@ -56,10 +57,10 @@ function AreaGate({ email, area, role, signOut }: { email: string; area: Area; r
   }
   if (asked !== area) return <NotAllowed asked={asked} home={home} email={email} signOut={signOut} />;
   if (area === 'platform') {
-    return <Suspense fallback={null}><PlatformConsole base={home} email={email} onSignOut={signOut} /></Suspense>;
+    return <Suspense fallback={<AppFrameSkeleton label="Loading the platform console" />}><PlatformConsole base={home} email={email} onSignOut={signOut} /></Suspense>;
   }
   if (area === 'doctor') {
-    return <Suspense fallback={null}><DoctorApp base={home} email={email} onSignOut={signOut} /></Suspense>;
+    return <Suspense fallback={<AppFrameSkeleton label="Loading your appointments" />}><DoctorApp base={home} email={email} onSignOut={signOut} /></Suspense>;
   }
   return <App base={home} userEmail={email} userRole={role} onSignOut={signOut} />;
 }

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Shuffle, ArrowUp, ArrowDown, AlertTriangle, Save } from 'lucide-react';
 import { api, errorMessage, inputInlineCls } from './broadcastUtils';
 import { useApi, refreshApi, errorOf } from './queryClient';
-import { BUTTON, Card, PageHeader, SkeletonRows } from './ui';
+import { BUTTON, Card, LoadError, PageHeader, SkeletonForm } from './ui';
 import type { ShowToast } from './types';
 
 type Mode = 'off' | 'round_robin' | 'least_busy';
@@ -37,7 +37,7 @@ export default function LeadAssignmentScreen({ showToast }: { showToast: ShowToa
     return (
       <div className="flex-1 overflow-y-auto bg-slate-100"><div className="max-w-4xl mx-auto px-4 py-5 space-y-4">
         <PageHeader icon={Shuffle} title="Lead assignment" />
-        {error ? <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div> : <SkeletonRows rows={3} label="Loading" />}
+        {error ? <LoadError error={error} onRetry={() => q.refetch()} /> : <SkeletonForm fields={4} label="Loading lead assignment" />}
       </div></div>
     );
   }

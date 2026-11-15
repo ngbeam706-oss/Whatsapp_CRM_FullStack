@@ -12,7 +12,8 @@ const { requireBusinessId } = require('./tenant.cjs');
 
 /**
  * @typedef {'max_staff' | 'max_contacts' | 'max_broadcasts_month' | 'max_automations' | 'max_ai_replies_month'
- *   | 'max_keyword_rules' | 'analytics_days' | 'max_whatsapp_numbers'} LimitKey
+ *   | 'max_keyword_rules' | 'analytics_days' | 'max_whatsapp_numbers'
+ *   | 'max_custom_fields' | 'max_import_rows_per_file' | 'max_import_file_mb' | 'max_import_rows_month'} LimitKey
  * @typedef {Record<LimitKey, number | null> & { ai_enabled: boolean, ads_enabled: boolean }} Limits  null = unlimited
  * @typedef {'staff' | 'contacts' | 'broadcasts' | 'automations' | 'aiReplies' | 'keywordRules'} Metric
  * @typedef {{ planId: string | null, planName: string, limits: Limits, paidUntil: string | null, status: string }} PlanInfo
@@ -26,8 +27,9 @@ const WARN_AT = 0.8;
 
 /** @type {LimitKey[]} */
 // max_whatsapp_numbers: main + extra WhatsApp numbers (checked in server/whatsappNumbers.cjs, not a usage metric,
-// so a one-number business is never shown "100% of your plan").
-const LIMIT_KEYS = ['max_staff', 'max_contacts', 'max_broadcasts_month', 'max_automations', 'max_ai_replies_month', 'max_keyword_rules', 'analytics_days', 'max_whatsapp_numbers'];
+// so a one-number business is never shown "100% of your plan"). The customer-import limits (SQL 20261142) are checked in
+// server/customFields.cjs and server/leadImport.cjs.
+const LIMIT_KEYS = ['max_staff', 'max_contacts', 'max_broadcasts_month', 'max_automations', 'max_ai_replies_month', 'max_keyword_rules', 'analytics_days', 'max_whatsapp_numbers', 'max_custom_fields', 'max_import_rows_per_file', 'max_import_file_mb', 'max_import_rows_month'];
 /** @type {Record<Metric, { limit: LimitKey, label: string }>} */
 const METRICS = {
   staff: { limit: 'max_staff', label: 'Team members' },

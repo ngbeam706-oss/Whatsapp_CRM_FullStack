@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, Download, Info, TrendingDown, TrendingUp } f
 import { api, errorMessage, inputInlineCls } from './broadcastUtils';
 import { apiFetch } from './apiClient';
 import { useApi } from './queryClient';
-import { BUTTON, SkeletonRows } from './ui';
+import { BUTTON, LoadError, SkeletonRows } from './ui';
 import { useFilterOptions } from './leadFilterUtils';
 import type { ShowToast, TeamResponse } from './types';
 
@@ -96,7 +96,7 @@ export default function AdsFunnel({ showToast }: { showToast: ShowToast }) {
         <button onClick={exportCsv} disabled={busy || !f} className={BUTTON.secondary}><Download className="w-3.5 h-3.5" /> Export CSV</button>
       </section>
 
-      {result.error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{errorMessage(result.error)}</div>}
+      {result.error && <LoadError error={errorMessage(result.error)} onRetry={() => result.refetch()} />}
       {result.isLoading && <SkeletonRows rows={4} label="Loading the funnel" />}
       {result.data && !f && <div className="p-3 bg-white border border-slate-200 rounded-xl text-sm text-slate-600">Connect an ad account to see the funnel.</div>}
       {f && (

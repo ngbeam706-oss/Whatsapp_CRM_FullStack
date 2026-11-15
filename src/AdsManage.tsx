@@ -3,7 +3,7 @@ import { Layers, RefreshCw, Search, ChevronRight, ExternalLink, Pencil, Wallet, 
 import { api, errorMessage, inputCls, inputInlineCls } from './broadcastUtils';
 import { useApi, refreshApi, errorOf, setApiData } from './queryClient';
 import { useConfirm } from './confirm';
-import { BUTTON, EmptyState, Modal, SkeletonRows } from './ui';
+import { BUTTON, EmptyState, Modal, SkeletonRows, LoadError } from './ui';
 import type { ShowToast } from './types';
 
 type Level = 'campaign' | 'adset' | 'ad';
@@ -103,7 +103,7 @@ export default function AdsManage({ showToast }: { showToast: ShowToast }) {
         </nav>
       )}
 
-      {!data ? (errorOf(query) ? <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{errorOf(query)}</div> : <SkeletonRows rows={5} />)
+      {!data ? (errorOf(query) ? <LoadError error={errorOf(query)} onRetry={() => query.refetch()} /> : <SkeletonRows rows={5} />)
         : !data.rows.length ? <EmptyState icon={Layers} title={`No ${LABEL[level]}s here`} text={delivery !== 'all' ? 'Try "All" to see ones that are off or old.' : 'Nothing in this ad account yet.'} />
           : (
             <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">

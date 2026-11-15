@@ -21,6 +21,7 @@ const TASKS = {
   recordingSweep: (/** @type {any} */ o) => require('../../server/callRecordings.cjs').sweep(o),
   adConversions: (/** @type {any} */ o) => require('../../server/adConversions.cjs').sweep(o),
   signupPrune: () => require('../../server/signupRequests.cjs').prune(),
+  importUndoPrune: () => require('../../server/leadImport.cjs').pruneUndo(),
 };
 
 async function runWorker({ now = () => Date.now(), hourly = new Date().getUTCMinutes() < 5, tasks = {} } = {}) {
@@ -55,6 +56,8 @@ async function runWorker({ now = () => Date.now(), hourly = new Date().getUTCMin
     await step('prune', () => t.prune());
     // Retention (DPDP): decided sign-up requests are deleted after 30 / 90 days.
     await step('signupPrune', () => t.signupPrune());
+    // Customer imports: the old values kept for Undo are deleted after the 7-day window (they may hold private details).
+    await step('importUndoPrune', () => t.importUndoPrune());
   }
   // Maintenance mode (Platform Admin): hold everything that sends to customers or calls Meta; it all
   // continues on the first run after maintenance ends. (The webhook and bot keep running.)

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Building2, Save, Lock, Clock } from 'lucide-react';
 import { Link } from 'react-router';
 import { api, errorMessage, inputCls, btnPrimary } from './broadcastUtils';
+import { LoadError, SkeletonForm } from './ui';
 import { useApi, refreshApi, errorOf } from './queryClient';
 import type { ShowToast } from './types';
 
@@ -46,8 +47,8 @@ export default function BusinessDetailsCard({ showToast, settingsPath }: { showT
   return (
     <section className="bg-white border border-slate-200 rounded-xl p-4 space-y-3" aria-label="Business details" data-testid="business-details">
       <div className="text-sm font-semibold text-slate-800 flex items-center gap-2"><Building2 className="w-4 h-4 text-wa-teal" /> Business details</div>
-      {error && <div className="p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{error}</div>}
-      {!b && !error && <div className="text-xs text-slate-500">Loading…</div>}
+      {error && <LoadError error={error} onRetry={() => q.refetch()} />}
+      {!b && !error && <SkeletonForm fields={3} label="Loading business details" />}
       {b && <BusinessForm key={JSON.stringify(b)} b={b} showToast={showToast} settingsPath={settingsPath} />}
     </section>
   );

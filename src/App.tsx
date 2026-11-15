@@ -1,21 +1,24 @@
 import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense, type ReactNode } from 'react';
 import { Routes, Route, Navigate, NavLink, Link, useLocation, useNavigate } from 'react-router';
 import { BrandLogo, useBrandName } from './BrandMark';
-import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags, Contact, Shuffle, CalendarDays, Stethoscope } from 'lucide-react';
+import { Plus, Radio, Check, Database, Users, Bot, GitBranch, Megaphone, Inbox, Kanban, BarChart3, Target, Sparkles, Smartphone, ListChecks, LifeBuoy, ClipboardList, UserCircle2, ShieldOff, LogOut, Home as HomeIcon, Tags, Contact, Shuffle, CalendarDays, Stethoscope, IdCard } from 'lucide-react';
 import { SCREENS, SETTINGS_PATH, urlOf, viewOf, canOpen, type View } from './appRoutes';
 import { supabase, saveCallRecording } from './supabaseClient';
 import { apiFetch } from './apiClient';
 import { SignOutButton } from './AuthGate';
-import InboxScreen from './InboxScreen';
-import RaiseQueryModal from './RaiseQueryModal';
 import AiModeToggle from './AiModeToggle';
+import { DialogLoading, LoadError, type SkeletonKind } from './ui';
 import { canManage } from './crmUtils';
 import ErrorBoundary, { ScreenLoading } from './ErrorBoundary';
 import { SideNav, BottomBar, ProfileMenu, NotificationBell, SearchButton, CommandPalette, LargeTextToggle, useSidebarCollapsed, useNotifications, useCommandShortcut, type ShellItem, type ShellGroup, type BellItem, type PaletteAction } from './AppShell';
 import { useApi, refreshApi } from './queryClient';
 
-// The Inbox (the default view) is in the main file; every other screen downloads the first time it
-// is opened, so the dashboard starts faster, especially on phones.
+// Every screen downloads the first time it is opened (Home is the first screen), so the dashboard starts
+// faster, especially on phones. Pop-ups opened from the menu download when first opened too.
+const InboxScreen = lazy(() => import('./InboxScreen'));
+const RaiseQueryModal = lazy(() => import('./RaiseQueryModal'));
+const DbSyncModal = lazy(() => import('./DbSyncModal'));
+const WebhookSetupModal = lazy(() => import('./WebhookSetupModal'));
 const BroadcastsScreen = lazy(() => import('./BroadcastsScreen'));
 const PipelineScreen = lazy(() => import('./PipelineScreen'));
 const TeamScreen = lazy(() => import('./TeamScreen'));
@@ -33,11 +36,10 @@ const GenericBotFlow = lazy(() => import('./GenericBotFlow'));
 const LeadStatusesScreen = lazy(() => import('./LeadStatusesScreen'));
 const LeadsScreen = lazy(() => import('./LeadsScreen'));
 const LeadAssignmentScreen = lazy(() => import('./LeadAssignmentScreen'));
+const CustomerFieldsScreen = lazy(() => import('./CustomerFieldsScreen'));
 const AppointmentsScreen = lazy(() => import('./AppointmentsScreen'));
 const ClinicSettingsScreen = lazy(() => import('./ClinicSettingsScreen'));
 import CallModal from './CallModal';
-import DbSyncModal from './DbSyncModal';
-import WebhookSetupModal from './WebhookSetupModal';
 import { startRingtone, stopRingtone, WebRTCCallSession } from './webrtcCallManager';
 import { emitWaCallEvent } from './whatsappCall';
 import { emitInboxAlert, useInboxAlerts } from './inboxAlerts';
@@ -75,11 +77,18 @@ const NAV: Array<{ view: View; label: string; icon: typeof Inbox; tint: string }
   { view: 'team', label: 'Team', icon: Users, tint: 'text-pink-600' },
   { view: 'lead_statuses', label: 'Lead statuses', icon: Tags, tint: 'text-violet-600' },
   { view: 'lead_assignment', label: 'Lead assignment', icon: Shuffle, tint: 'text-teal-600' },
+  { view: 'custom_fields', label: 'Customer fields', icon: IdCard, tint: 'text-sky-600' },
   { view: 'clinic', label: 'Clinic', icon: Stethoscope, tint: 'text-rose-600' },
   { view: 'flow', label: 'Bot Flow', icon: GitBranch, tint: 'text-emerald-600' },
   { view: 'bot_config', label: 'Auto-replies', icon: Bot, tint: 'text-amber-600' },
   { view: 'ai', label: 'AI assistant', icon: Sparkles, tint: 'text-violet-600' },
 ];
+
+/** The skeleton each screen shows while its code downloads (src/ui.tsx SkeletonPage); others get rows. */
+const SKELETON_OF: Partial<Record<View, SkeletonKind>> = {
+  home: 'cards', chat: 'chat', pipeline: 'board', leads: 'table', analytics: 'cards', ads: 'cards',
+  profile: 'form', setup: 'form', whatsapp: 'form', lead_assignment: 'form', clinic: 'form', ai: 'form', flow: 'form',
+};
 
 /** Screens only hospital / clinic businesses get (the server refuses the rest too: /api/clinic). */
 const CLINIC_VIEWS: readonly View[] = ['appointments', 'clinic'];
@@ -109,6 +118,11 @@ function ScreenNotFound({ inbox }: { inbox: string }) {
       </div>
     </div>
   );
+}
+
+/** The bot pages when the bot could not be loaded (never an empty editor that could save over it). */
+function BotLoadError({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return <div className="flex-1 overflow-y-auto bg-slate-100"><div className="max-w-5xl mx-auto px-4 py-5"><LoadError error={error} onRetry={onRetry} /></div></div>;
 }
 
 /** The Settings area: its own side menu (a row on phones) next to the chosen settings screen. */
@@ -279,18 +293,22 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
 
   // This business's bot menus and keyword rules (the server knows which business we are).
   // Managers and the Business Admin only: agents don't see the bot pages.
+  // A failed load shows "Try again" on the bot pages (never an empty editor that could save over the real bot).
+  const [botLoad, setBotLoad] = useState<{ attempt: number; catalogError: string; rulesLoaded: boolean; rulesError: string }>({ attempt: 0, catalogError: '', rulesLoaded: false, rulesError: '' });
+  const retryBot = useCallback(() => { setCatalogLoaded(false); setBotLoad(b => ({ attempt: b.attempt + 1, catalogError: '', rulesLoaded: false, rulesError: '' })); }, []);
   useEffect(() => {
     if (!isManager) return;
+    const failed = (res: Response) => { throw new Error(`Could not load the bot (${res.status}).`); };
     apiFetch('/api/bot-catalog')
-      .then(res => (res.ok ? res.json() : null))
+      .then(res => (res.ok ? res.json() : failed(res)))
       .then(data => { if (data?.catalog) setBotCatalog({ ...EMPTY_CATALOG, ...data.catalog }); })
-      .catch(() => {})
+      .catch((e) => setBotLoad(b => ({ ...b, catalogError: errorMessage(e) })))
       .finally(() => setCatalogLoaded(true));
     apiFetch('/api/bot-rules')
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => { if (Array.isArray(data?.rules)) setBotRules(data.rules); })
-      .catch(() => {});
-  }, [isManager]);
+      .then(res => (res.ok ? res.json() : failed(res)))
+      .then(data => { if (Array.isArray(data?.rules)) setBotRules(data.rules); setBotLoad(b => ({ ...b, rulesLoaded: true })); })
+      .catch((e) => setBotLoad(b => ({ ...b, rulesLoaded: true, rulesError: errorMessage(e) })));
+  }, [isManager, botLoad.attempt]);
 
 
   const showToast: ShowToast = (text) => {
@@ -539,7 +557,8 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
   /** One screen's route (path relative to the area, or to /settings); managers' screens behind the role guard. */
   const screenRoute = (view: View, element: ReactNode) => {
     const path = SCREENS[view].group === 'settings' ? SCREENS[view].path.slice(SETTINGS_PATH.length + 1) : SCREENS[view].path;
-    return <Route key={view} path={`${path}/*`} element={<ManagersOnly allowed={canOpen(view, isManager)} inbox={inbox}>{element}</ManagersOnly>} />;
+    // Each screen's own Suspense: while its code downloads, a skeleton shaped like that screen.
+    return <Route key={view} path={`${path}/*`} element={<ManagersOnly allowed={canOpen(view, isManager)} inbox={inbox}><Suspense fallback={<ScreenLoading kind={SKELETON_OF[view] || 'list'} />}>{element}</Suspense></ManagersOnly>} />;
   };
 
   // ---- The frame: side menu (desktop), tab bar (phones), bell, search (src/AppShell.tsx) ----
@@ -564,7 +583,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
     item('analytics'),
   ]);
   // Settings in two plain groups (U4): the business itself, and how the bot / AI answer customers.
-  const settingsBusiness = pick((['setup', 'whatsapp', 'team', 'lead_statuses', 'lead_assignment', 'clinic'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
+  const settingsBusiness = pick((['setup', 'whatsapp', 'team', 'lead_statuses', 'lead_assignment', 'custom_fields', 'clinic'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
   const settingsBot = pick((['flow', 'bot_config', 'ai'] as View[]).filter(v => settingsNav.some(n => n.view === v)).map(v => item(v)));
   const youItems = pick([item('profile')]);
   const groups: ShellGroup[] = [
@@ -704,15 +723,18 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
                 {screenRoute('team', <TeamScreen showToast={showToast} />)}
                 {screenRoute('lead_statuses', <LeadStatusesScreen showToast={showToast} />)}
                 {screenRoute('lead_assignment', <LeadAssignmentScreen showToast={showToast} />)}
+                {screenRoute('custom_fields', <CustomerFieldsScreen showToast={showToast} />)}
                 {screenRoute('clinic', <ClinicSettingsScreen isOwner={userRole === 'owner'} showToast={showToast} />)}
                 {screenRoute('flow', (
                   // Arogya Ruchulu's food bot has its own editor; every other business gets the basic flow.
                   // (Wait for the catalog: until then we don't know which bot this business has.)
-                  !catalogLoaded ? <ScreenLoading /> : botCatalog.foodBuiltIns
+                  !catalogLoaded ? <ScreenLoading kind="form" /> : botLoad.catalogError ? <BotLoadError error={botLoad.catalogError} onRetry={retryBot} />
+                    : botCatalog.foodBuiltIns
                     ? <BotFlowScreen catalog={botCatalog} onSaveCatalog={handleSaveCatalog} onResetCatalog={handleResetCatalog} />
                     : <GenericBotFlow catalog={botCatalog} onSaveCatalog={handleSaveCatalog} onResetCatalog={handleResetCatalog} />
                 ))}
-                {screenRoute('bot_config', <BotConfigScreen botRules={botRules} onSaveRule={handleSaveBotRule} onDeleteRule={handleDeleteBotRule} onToggleRule={handleToggleBotRule} />)}
+                {screenRoute('bot_config', !botLoad.rulesLoaded ? <ScreenLoading /> : botLoad.rulesError ? <BotLoadError error={botLoad.rulesError} onRetry={retryBot} />
+                  : <BotConfigScreen botRules={botRules} onSaveRule={handleSaveBotRule} onDeleteRule={handleDeleteBotRule} onToggleRule={handleToggleBotRule} />)}
                 {screenRoute('ai', <AiAssistantScreen showToast={showToast} />)}
                 <Route path="*" element={<ScreenNotFound inbox={inbox} />} />
               </Routes>
@@ -736,21 +758,29 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
       {showSearch && <CommandPalette actions={paletteActions} onOpenContact={openChatFromPipeline} onOpenQuery={openQuery} onClose={() => setShowSearch(false)} />}
 
       {/* Data and sync (managers; opened from Settings -> WhatsApp or search) */}
-      <DbSyncModal
-        isOpen={showDbModal}
-        onClose={() => setShowDbModal(false)}
-        onSyncEverything={handleSyncEverythingToDb}
-        isSyncingDb={isSyncingDb}
-        showToast={showToast}
-      />
+      {showDbModal && (
+        <Suspense fallback={<DialogLoading />}>
+          <DbSyncModal
+            isOpen={showDbModal}
+            onClose={() => setShowDbModal(false)}
+            onSyncEverything={handleSyncEverythingToDb}
+            isSyncingDb={isSyncingDb}
+            showToast={showToast}
+          />
+        </Suspense>
+      )}
 
       {/* Meta Webhook Setup Modal */}
-      <WebhookSetupModal
-        isOpen={showSetupModal}
-        onClose={() => setShowSetupModal(false)}
-        statusInfo={statusInfo}
-        showToast={showToast}
-      />
+      {showSetupModal && (
+        <Suspense fallback={<DialogLoading />}>
+          <WebhookSetupModal
+            isOpen={showSetupModal}
+            onClose={() => setShowSetupModal(false)}
+            statusInfo={statusInfo}
+            showToast={showToast}
+          />
+        </Suspense>
+      )}
 
       {/* WebRTC Live Audio Call Modal */}
       <CallModal
@@ -773,7 +803,7 @@ export default function App({ base, userEmail, userRole, onSignOut }: AppProps) 
       <WhatsAppCallPanel showToast={showToast} />
 
       {/* Toast Notification */}
-      {showRaiseQuery && <RaiseQueryModal role={userRole} onClose={() => setShowRaiseQuery(false)} showToast={showToast} />}
+      {showRaiseQuery && <Suspense fallback={<DialogLoading />}><RaiseQueryModal role={userRole} onClose={() => setShowRaiseQuery(false)} showToast={showToast} /></Suspense>}
 
       {toastMessage && (
         <div role="status" className="fixed bottom-20 md:bottom-4 right-4 left-4 sm:left-auto bg-slate-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-xl z-50 flex items-center gap-2">

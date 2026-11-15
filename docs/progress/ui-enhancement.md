@@ -293,7 +293,7 @@ Per role, what changed:
   test also wait for skeletons to finish.
 
 ## Next
-- [ ] Deploy U5 + loading states (ask first).
+- [x] Deploy U5 + loading states: LIVE 2026-11-15 (deploy 6af986bf, commit aa8f26b; main chunk 66 kB on the live site).
 - [ ] Optional: Bot Flow save buttons with a busy state (needs the save handlers in App.tsx to return promises).
 - [ ] User report 2026-11-13: "navigating to another page opens a new tab". Not reproduced: app links have no
       new-tab target (only links to Meta / files do), live public pages and every e2e menu click stay in one

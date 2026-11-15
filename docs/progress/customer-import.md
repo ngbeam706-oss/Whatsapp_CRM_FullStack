@@ -1,7 +1,6 @@
 # Customer data import + custom fields
 
-Status: **D1 + D2 BUILT 2026-11-15, not deployed, not committed.** The user must run SQL
-`supabase/migrations/20261142_customer_import.sql` before deploying. D3 / D4 later. Written 2026-11-15.
+Status: **D1 + D2 LIVE 2026-11-15** (deploy 6af986bf, commit aa8f26b; SQL `20261142_customer_import.sql` run and checked). D3 / D4 later.
 
 ## Done (D1 + D2, 2026-11-15)
 - **SQL `20261142_customer_import.sql`** (safe to re-run, server-only tables):
@@ -77,7 +76,7 @@ Status: **D1 + D2 BUILT 2026-11-15, not deployed, not committed.** The user must
   (service role only), and `import` in the status-history sources. Still safe to re-run; still not run.
 
 ## Next
-- [ ] User runs SQL `20261142_customer_import.sql`, then deploy (ask first).
+- [x] SQL 20261142 run, deployed 2026-11-15 (deploy 6af986bf).
 - [x] CLAUDE.md: key files row + latest migration `20261142` (done in the cross-check, 2026-11-15).
 - [x] Cross-check fix: deleting a lead permanently (Leads page) now also removes its `lead_import_changes` rows
       (old values kept for Undo are personal data); test in `tests/leadsTools.test.cjs`.

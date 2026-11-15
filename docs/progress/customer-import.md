@@ -1,6 +1,6 @@
 # Customer data import + custom fields
 
-Status: **D1 + D2 LIVE 2026-11-15** (deploy 6af986bf, commit aa8f26b; SQL `20261142_customer_import.sql` run and checked). **D3 + D4 built 2026-11-15, not deployed**: SQL `20261143_customer_import_d3d4.sql` to run first.
+Status: **D1 + D2 + D3 + D4 LIVE 2026-11-15** (D1+D2 deploy 6af986bf; D3+D4 deploy 6af9b1ca, commit cb7636b; SQL 20261142 + 20261143 run and checked). D5 optional later.
 
 ## Done (D1 + D2, 2026-11-15)
 - **SQL `20261142_customer_import.sql`** (safe to re-run, server-only tables):

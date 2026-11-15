@@ -1,6 +1,6 @@
 # Activity log: complete user-action logging + Business Admin's Activity log screen
 
-Status: **L1 + L2 + L3 BUILT 2026-11-15, not deployed, not committed.** SQL to run first:
+Status: **L1 + L2 + L3 LIVE 2026-11-15** (deploy 6af9b1ca, commit cb7636b; SQL `20261144_activity_log.sql` run and checked). L4 (doctor actions) next; the 1-year clean-up (L5) is already in.
 **`supabase/migrations/20261144_activity_log.sql`** (it goes out with the customer import D3 + D4 SQL `20261143`). L4 + L5 next.
 
 ## Done (L1 + L2 + L3, 2026-11-15)
